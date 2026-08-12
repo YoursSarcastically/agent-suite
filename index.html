@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Suite — 12 agents running in your browser</title>
+<meta name="description" content="Twelve structured-output AI agents running fully in the browser via WebGPU. No API key, no server, no data leaves the tab." />
+<link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>Agent Suite</h1>
+    <p class="tagline">
+      Twelve agents running <strong>entirely in this tab</strong> — WebGPU, no API key, no server.
+      Nothing you type leaves your machine.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="boot" class="panel">
+    <div class="row">
+      <label for="model">Model</label>
+      <select id="model"></select>
+      <button id="load" class="primary">Load model</button>
+    </div>
+    <div id="status" class="status">
+      First load downloads weights into your browser cache (~1.1&nbsp;GB for the 1.5B).
+      It is cached afterwards.
+    </div>
+    <div class="bar-track" hidden><div class="bar" id="bar"></div></div>
+    <div id="unsupported" class="warn" hidden></div>
+  </section>
+
+  <section id="grid" class="grid" aria-label="Agents"></section>
+
+  <section id="workbench" class="panel" hidden>
+    <div class="wb-head">
+      <h2 id="wb-title"></h2>
+      <button id="wb-close" class="ghost" aria-label="Close">✕</button>
+    </div>
+    <p id="wb-blurb" class="muted"></p>
+
+    <label for="input">Input</label>
+    <textarea id="input" rows="8" spellcheck="false"></textarea>
+
+    <div class="row">
+      <button id="run" class="primary">Run agent</button>
+      <button id="reset" class="ghost">Reset to sample</button>
+      <span id="metrics" class="metrics"></span>
+    </div>
+
+    <label for="output">Output <span class="muted">(schema-constrained JSON)</span></label>
+    <pre id="output" class="output">—</pre>
+    <div id="schema-note" class="muted small"></div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p class="muted small">
+    Built by <a href="https://github.com/YoursSarcastically">YoursSarcastically</a>.
+    Inference by <a href="https://github.com/mlc-ai/web-llm">WebLLM</a>.
+    <a href="https://github.com/YoursSarcastically/agent-suite">Source</a>.
+  </p>
+</footer>
+
+<script type="module" src="src/ui.js"></script>
+</body>
+</html>

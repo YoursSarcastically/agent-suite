@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Suite — eval run</title>
+<link rel="stylesheet" href="../src/styles.css" />
+<style>
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pass { color: #3fb950; font-weight: 700; }
+  .fail { color: #f85149; font-weight: 700; }
+  .tag { font-size: 0.7rem; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--border); color: var(--muted); }
+  .scoreboard { display: flex; gap: 26px; flex-wrap: wrap; margin: 14px 0; }
+  .stat { font-size: 1.7rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-label { color: var(--muted); font-size: 0.76rem; }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>Eval run</h1>
+  <p class="tagline">
+    Runs the golden set against the on-device model. Refusal cases are tracked separately —
+    they are the ones that actually matter.
+  </p>
+</div></header>
+
+<main class="wrap">
+  <section class="panel">
+    <div class="row">
+      <label for="model">Model</label>
+      <select id="model"></select>
+      <button id="go" class="primary">Run evals</button>
+    </div>
+    <div id="status" class="status">Loads the model, then runs every case once.</div>
+    <div class="bar-track" hidden><div class="bar" id="bar"></div></div>
+    <div class="scoreboard" id="scoreboard" hidden>
+      <div><div class="stat" id="s-pass">—</div><div class="stat-label">passed</div></div>
+      <div><div class="stat" id="s-total">—</div><div class="stat-label">total</div></div>
+      <div><div class="stat" id="s-refusal">—</div><div class="stat-label">refusal cases</div></div>
+      <div><div class="stat" id="s-repairs">—</div><div class="stat-label">values clamped</div></div>
+      <div><div class="stat" id="s-time">—</div><div class="stat-label">median latency</div></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <table>
+      <thead><tr><th>#</th><th>Agent</th><th>Case</th><th>Result</th><th>Detail</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+
+<script type="module" src="run.js"></script>
+</body>
+</html>

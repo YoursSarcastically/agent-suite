@@ -1,0 +1,170 @@
+{
+  "_note": "Golden set. Each case asserts on specific output FIELDS, not on exact prose - the generation is stochastic but the classification should not be. Cases marked refusal:true are the ones that matter most: they check the agent declines rather than inventing an answer.",
+  "cases": [
+    {
+      "agent": "triage",
+      "name": "duplicate charge is billing, not a bug",
+      "input": "I was billed $49 twice this month on the same card. Please refund one.",
+      "expect": {
+        "category": "billing",
+        "team": "billing"
+      }
+    },
+    {
+      "agent": "triage",
+      "name": "total outage is urgent",
+      "input": "Nothing loads for anyone on our team. The whole dashboard is 500ing. We are dead in the water.",
+      "expect": {
+        "category": "outage",
+        "priority": "urgent"
+      }
+    },
+    {
+      "agent": "triage",
+      "name": "vague message should not be escalated to urgent",
+      "input": "hey quick question about the thing we discussed",
+      "expect_one_of": {
+        "priority": [
+          "low",
+          "normal"
+        ]
+      },
+      "note": "Guards against priority inflation on ambiguous input."
+    },
+    {
+      "agent": "extract",
+      "name": "pulls order id and amount, invents nothing",
+      "input": "Order #A-99271 came to $128.40 and shipped on 3 March.",
+      "expect_contains": {
+        "order_ids": "A-99271",
+        "amounts": "128.40"
+      },
+      "expect_empty": [
+        "people"
+      ],
+      "note": "people must stay empty - no name is present."
+    },
+    {
+      "agent": "draft-reply",
+      "name": "answers when the context supports it",
+      "input": "CONTEXT:\nRefunds reach the original payment method in 5-7 business days.\n\nMESSAGE:\nHow long for my refund?",
+      "expect": {
+        "grounded": true
+      }
+    },
+    {
+      "agent": "draft-reply",
+      "name": "refuses when the context is silent",
+      "input": "CONTEXT:\nRefunds reach the original payment method in 5-7 business days.\n\nMESSAGE:\nDo you offer a student discount?",
+      "expect": {
+        "grounded": false
+      },
+      "refusal": true,
+      "note": "The single most important case in the suite."
+    },
+    {
+      "agent": "kb-gap",
+      "name": "spots the gap",
+      "input": "CONTEXT:\nPro is $49/month with 10 seats.\n\nQUESTION:\nIs there a non-profit discount?",
+      "expect": {
+        "answerable": false,
+        "coverage": "none"
+      },
+      "refusal": true
+    },
+    {
+      "agent": "kb-gap",
+      "name": "does not manufacture a gap when covered",
+      "input": "CONTEXT:\nPro is $49/month with 10 seats.\n\nQUESTION:\nHow much is Pro?",
+      "expect": {
+        "answerable": true,
+        "coverage": "full"
+      }
+    },
+    {
+      "agent": "sentiment",
+      "name": "explicit competitor mention is high churn risk",
+      "input": "Third time writing. No reply in six days. I'm moving my team to a competitor - how do I export?",
+      "expect": {
+        "churn_risk": "high",
+        "escalate_to_human": true
+      }
+    },
+    {
+      "agent": "sentiment",
+      "name": "mild annoyance is not churn",
+      "input": "The export is a bit slow today, but no rush - just flagging it.",
+      "expect_one_of": {
+        "churn_risk": [
+          "none",
+          "low"
+        ]
+      },
+      "note": "Guards against treating any negative word as a churn signal."
+    },
+    {
+      "agent": "route",
+      "name": "routes an unclear message to a human",
+      "input": "it's broken again, you know the one",
+      "expect": {
+        "workflow": "human_review"
+      },
+      "refusal": true
+    },
+    {
+      "agent": "route",
+      "name": "routes a clear cancellation",
+      "input": "Please cancel my subscription before the next billing date.",
+      "expect": {
+        "workflow": "cancel_subscription"
+      }
+    },
+    {
+      "agent": "redact",
+      "name": "finds email and phone",
+      "input": "Reach me on +1 415 555 0142 or marcus.webb@example.com",
+      "expect": {
+        "safe_to_share": false
+      },
+      "expect_contains": {
+        "finding_types": "email"
+      }
+    },
+    {
+      "agent": "redact",
+      "name": "clean text needs no redaction",
+      "input": "The export job times out on accounts over 50,000 rows.",
+      "expect": {
+        "safe_to_share": true
+      },
+      "expect_empty": [
+        "finding_types",
+        "finding_values"
+      ]
+    },
+    {
+      "agent": "qa-score",
+      "name": "polite non-answer scores low on resolution",
+      "input": "CUSTOMER: How long until my refund?\n\nAGENT REPLY: Thanks so much for reaching out! We value your business. Have a wonderful day!",
+      "expect_max": {
+        "resolution": 2
+      },
+      "expect_one_of": {
+        "verdict": [
+          "revise",
+          "reject"
+        ]
+      },
+      "note": "Checks the judge is not fooled by warmth."
+    },
+    {
+      "agent": "actions",
+      "name": "marks an ownerless task unassigned",
+      "input": "Ben ships the workaround Friday. Someone needs to email the affected customers first.",
+      "expect_min": {
+        "unassigned_count": 1
+      },
+      "note": "Must not guess that Ben owns the second task."
+    }
+  ]
+}
