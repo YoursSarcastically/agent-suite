@@ -16,6 +16,7 @@ import { el, fill, ago } from "../dom.js";
 import { SHELF_READ, LIBRARIAN, SHELF_PICK, MIRROR } from "../app-agents.js";
 import { runLoop } from "../orchestrator.js";
 import { collection } from "../store.js";
+import { fetchArticle, looksLikeUrl, networkLog } from "../catalog.js";
 
 const shelf = collection("pile:articles", { cap: 250 });
 
@@ -29,7 +30,7 @@ export default {
   mount(root, ctx) {
     const paste = el("textarea.field", {
       rows: 4,
-      placeholder: "Paste the full text of an article",
+      placeholder: "Paste a link, or the full text of an article",
     });
     const ask = el("input.field", {
       type: "text",
@@ -38,6 +39,7 @@ export default {
     const answerEl = el("div");
     const shelfEl = el("div.stack");
     const trail = ctx.trail();
+    const netEl = el("div");
 
     const saveBtn = el("button.btn.btn-primary", { onclick: save }, "Save article");
     // Not `onclick: askShelf` - a handler is called with the Event, which would
@@ -61,43 +63,74 @@ export default {
       ctx.toast(`Loaded ${file.name} — press "File it".`);
     });
 
-    render();
-
+    // Declared before render(), which reaches for it. `const` is not hoisted, so
+    // the other order throws in the temporal dead zone and the app mounts blank.
     const findPanel = el("section.panel", { hidden: shelf.count() === 0 },
       el("label.label", { text: "Find an article" }),
       ask,
       el("div.row", { style: { marginTop: "14px" } }, askBtn, timeBtn, mirrorBtn));
+
+    render();
 
     root.append(
       el("section.panel", {},
         el("label.label", { text: "Save an article" }),
         paste,
         el("div.row", { style: { marginTop: "14px" } }, saveBtn,
-          el("span.small.dim", { text: "or drag a .txt file onto this page" }))),
+          el("span.small.dim", { text: "or drag a .txt file onto this page" })),
+        el("p.small.dim", { style: { marginTop: "12px" },
+          text: "Pasted text stays on your machine. Pasting a link sends just that " +
+                "address to a reader service so the page can be fetched." })),
       findPanel,
       trail.node,
       answerEl,
-      el("section.panel", {}, el("label.label", { text: "Saved articles" }), shelfEl)
+      el("section.panel", {}, el("label.label", { text: "Saved articles" }), shelfEl),
+      netEl
     );
 
     /* ---------------- filing ---------------- */
 
     async function save() {
-      const text = paste.value.trim();
-      if (text.length < 120) return ctx.toast("That is too short. Paste the whole article.");
+      const raw = paste.value.trim();
+      const isUrl = looksLikeUrl(raw);
+      if (!isUrl && raw.length < 120) {
+        return ctx.toast("That is too short. Paste a link, or the whole article.");
+      }
 
       await ctx.busy(saveBtn, async (signal) => {
         trail.reset();
+
+        let text = raw;
+        let source = "";
+
+        if (isUrl) {
+          trail.plan("fetch", "Fetching the page");
+          try {
+            const page = await fetchArticle(raw, { signal });
+            text = page.title ? `${page.title}\n\n${page.text}` : page.text;
+            source = page.url;
+            trail.done("fetch", page.title || "Page fetched");
+          } catch (err) {
+            if (err.name === "AbortError") return;
+            trail.warn("fetch", err.message);
+            return ctx.toast(`${err.message} — try pasting the text instead.`);
+          }
+          if (text.length < 120) {
+            return ctx.toast("That page had almost no text. Try pasting it instead.");
+          }
+        }
+
         trail.plan("shelf-read", "Reading and summarising the article");
 
         // Long articles blow the context window; the opening is where the
         // argument lives, and the tail is usually related-links furniture.
         const { data } = await ctx.run(SHELF_READ, text.slice(0, 6000), { signal });
-        shelf.add({ ...data, text: text.slice(0, 20000), read: false });
+        shelf.add({ ...data, text: text.slice(0, 20000), source, read: false });
 
         trail.done("shelf-read", `${data.title} — ${data.minutes} min, ${data.difficulty}`);
         paste.value = "";
         render();
+        renderNetwork();
         ctx.toast("Saved.");
       });
     }
@@ -235,6 +268,13 @@ export default {
 
     /* ---------------- shelf ---------------- */
 
+    function renderNetwork() {
+      if (!networkLog.length) return fill(netEl);
+      fill(netEl, el("details.net", {},
+        el("summary", { text: `${networkLog.length} page${networkLog.length === 1 ? "" : "s"} fetched — see exactly what was requested` }),
+        el("ul", {}, networkLog.map((r) => el("li", { text: r.failed ? `${r.url} — ${r.note}` : r.url })))));
+    }
+
     function render() {
       const all = shelf.all();
       findPanel.hidden = all.length === 0;
@@ -261,6 +301,8 @@ export default {
           el("div.task-meta", {},
             el("span.pill", { text: `${a.minutes} min` }),
             ...a.topics.slice(0, 3).map((t) => el("span.pill", { text: t })),
+            a.source && el("a.small", { href: a.source, target: "_blank",
+              rel: "noopener noreferrer", text: "Open ↗" }),
             el("button.btn.btn-ghost.btn-sm", {
               onclick: () => { shelf.remove(a.id); render(); },
             }, "Remove")))));

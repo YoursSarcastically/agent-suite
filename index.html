@@ -3,41 +3,38 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Agent Suite — four apps that run entirely in your browser</title>
-<meta name="description" content="Four small AI apps running fully on your own GPU via WebGPU. No API key, no server, no account, no bill — and they keep working offline." />
+<title>Agent Suite — five apps that run entirely in your browser</title>
+<meta name="description" content="Five small AI apps running fully on your own GPU via WebGPU. No API key, no server, no account, no bill — and they keep working offline." />
 <meta name="color-scheme" content="light dark" />
 <link rel="stylesheet" href="src/styles.css" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🫧</text></svg>" />
 </head>
 <body>
 
-<!-- The engine is global state, so it lives in the sticky bar rather than in a
-     panel that scrolls away the moment you start using an app. -->
-<header class="topbar">
-  <div class="wrap topbar-in">
-    <button class="wordmark" onclick="location.hash=''">
-      <span class="dot" aria-hidden="true"></span>
-      Agent Suite
-    </button>
-    <span class="spacer"></span>
-    <a class="btn btn-ghost btn-sm hide-sm" href="evals/run.html">Evals</a>
-    <a class="btn btn-ghost btn-sm hide-sm" href="https://github.com/YoursSarcastically/agent-suite">Source</a>
-  </div>
-  <div class="bar-track topbar-bar" id="bar-track" hidden><div class="bar" id="bar"></div></div>
-</header>
-
+<!-- No top bar. The apps have their own back control, the gate owns the engine,
+     and a persistent chrome strip on a five-page site is a row of pixels doing
+     nothing. Everything that lived up there is in the footer. -->
 <main class="wrap">
   <div id="view"></div>
 </main>
 
 <footer class="wrap">
+  <div class="footer-top">
+    <button class="wordmark" onclick="location.hash=''; scrollTo({top:0, behavior:'smooth'})">
+      <span class="dot" aria-hidden="true"></span>
+      Agent Suite
+    </button>
+    <nav class="footer-nav">
+      <a href="evals/run.html">Evals</a>
+      <a href="evals/apps.html">Latency</a>
+      <a href="https://github.com/YoursSarcastically/agent-suite">Source</a>
+      <a href="https://www.linkedin.com/in/surajsharma97/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+    </nav>
+  </div>
   <p>
     Inference by <a href="https://github.com/mlc-ai/web-llm">WebLLM</a>, running on your GPU via WebGPU.
-    Needs Chrome/Edge&nbsp;113+ or Safari&nbsp;18+. First load caches the weights; after that it works offline.
-  </p>
-  <p>
-    Built by <a href="https://github.com/YoursSarcastically">YoursSarcastically</a> ·
-    <a href="https://github.com/YoursSarcastically/agent-suite">Source</a>
+    Needs Chrome/Edge&nbsp;113+ or Safari&nbsp;18+. The model downloads once and is then cached,
+    so it keeps working offline.
   </p>
 </footer>
 

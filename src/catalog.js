@@ -196,6 +196,49 @@ export async function searchBooks(term, { limit = 8, signal } = {}) {
 }
 
 /* ------------------------------------------------------------------ *
+ * article fetching
+ * ------------------------------------------------------------------ */
+
+/**
+ * Fetch the readable text of a web page.
+ *
+ * A browser cannot fetch an arbitrary site directly - almost nothing sends
+ * `Access-Control-Allow-Origin`, so the request is blocked before it starts.
+ * That is a genuine wall, not an oversight, and it is why "paste a link" needs
+ * something in the middle.
+ *
+ * r.jina.ai is a reader service that strips a page to its text and does send
+ * CORS headers, needs no API key, and so keeps this a static site. Being honest
+ * about the cost: the URL goes to them. Nothing else does - not the article, not
+ * what you do with it - but the address of what you are reading leaves the
+ * machine, so the caller is expected to say so before using this.
+ */
+export async function fetchArticle(url, { signal } = {}) {
+  const clean = url.trim().replace(/^https?:\/\//, "");
+  const endpoint = `https://r.jina.ai/https://${clean}`;
+  await throttle();
+  const res = await fetch(record({ url: endpoint, note: "reading the page" }), { signal });
+  if (!res.ok) throw new Error(`Could not read that page (${res.status})`);
+
+  const body = await res.text();
+
+  // The reader puts its own headers on the front; the title is the useful one.
+  const title = body.match(/^Title:\s*(.+)$/m)?.[1]?.trim() ?? "";
+  const start = body.indexOf("Markdown Content:");
+  const content = start !== -1 ? body.slice(start + "Markdown Content:".length) : body;
+
+  return { title, text: content.trim(), url };
+}
+
+/** Does this look like something to fetch rather than text to file? */
+export const looksLikeUrl = (s) => {
+  const t = (s ?? "").trim();
+  if (/\s/.test(t)) return false;
+  return /^https?:\/\/\S+$/i.test(t) || /^[\w-]+(\.[\w-]+)+\/\S*$/.test(t) ||
+         /^[\w-]+(\.[\w-]+){1,}$/.test(t);
+};
+
+/* ------------------------------------------------------------------ *
  * enrichment - OMDb
  * ------------------------------------------------------------------ */
 

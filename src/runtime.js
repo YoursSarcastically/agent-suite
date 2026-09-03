@@ -79,7 +79,7 @@ export async function storageReport(neededBytes = 0) {
   }
 }
 
-/** Drop every cached model. The only way back from a full quota. */
+/** Drop every cached model. The blunt instrument, offered in the UI. */
 export async function clearModelCache() {
   let removed = 0;
   try {
@@ -89,6 +89,38 @@ export async function clearModelCache() {
   } catch { /* storage denied */ }
   return removed;
 }
+
+/**
+ * Evict every cached model except the one about to be used.
+ *
+ * WebLLM caches weights and never removes them. Try four models and the origin
+ * quota fills; from then on every load dies inside the library on
+ * `Failed to execute 'add' on 'Cache': Unexpected internal error`, which names
+ * neither the cause nor a way out. Measured here: 2.93 GB used against a
+ * 2.93 GB quota, 184 shards from six models, after which a 1.85 GB model could
+ * not load at all.
+ *
+ * Shard URLs carry their model id, so the ones belonging to other models can be
+ * dropped precisely rather than clearing everything and re-downloading the model
+ * that is actually wanted. Called before a load when space is short.
+ */
+export async function evictOtherModels(keepModelId) {
+  let removed = 0;
+  try {
+    const cache = await caches.open("webllm/model");
+    for (const request of await cache.keys()) {
+      if (request.url.includes(keepModelId)) continue;
+      if (await cache.delete(request)) removed++;
+    }
+  } catch { /* storage denied, or the cache does not exist yet */ }
+  return removed;
+}
+
+/** Roughly what a model needs on disk, from its declared VRAM. */
+const bytesNeeded = (modelId) => {
+  const gb = Number(MODELS.find((m) => m.id === modelId)?.vram.match(/[\d.]+/)?.[0] ?? 2);
+  return gb * 1024 ** 3;
+};
 
 let enginePromise = null;
 let activeModel = null;
@@ -143,6 +175,16 @@ export async function getEngine(modelId = DEFAULT_MODEL, onProgress = () => {}) 
   if (enginePromise && activeModel === modelId) return enginePromise;
 
   activeModel = modelId;
+
+  // Make room before asking for more. Without this the library fails deep
+  // inside a Cache.add() with an error that says nothing useful, and the user
+  // is left with a stalled progress bar.
+  const room = await storageReport();
+  if (room.quota && room.free < bytesNeeded(modelId)) {
+    const dropped = await evictOtherModels(modelId);
+    if (dropped) onProgress(0, `Making room — removed ${dropped} files from other models`);
+  }
+
   // Some prebuilt records ship a config the engine will not accept; a model may
   // carry the correction with it rather than the caller having to know.
   const chatOpts = MODELS.find((m) => m.id === modelId)?.chatOpts;
@@ -294,6 +336,74 @@ export async function runAgent(agent, input, opts = {}) {
     tokensPerSecond: tps(completionTokens || raw.length / 4, elapsedMs),
     model: modelId,
   };
+}
+
+/**
+ * Free-form chat.
+ *
+ * The only path here that is not schema-constrained, and the exception proves
+ * the rule: everything else in this project asks the model for a decision that
+ * another piece of code will act on, so the shape has to be guaranteed. A
+ * conversation has no downstream consumer but a person reading it, so a grammar
+ * would buy nothing and cost the thing chat is actually for.
+ *
+ * History is trimmed from the oldest turn rather than the newest. A 4096-token
+ * window fills faster than people expect, and dropping the beginning of a long
+ * conversation is a mild loss - dropping what was just said makes the model
+ * appear to have a stroke.
+ */
+export async function chat(messages, opts = {}) {
+  const { modelId = DEFAULT_MODEL, onToken = () => {}, signal = null, system } = opts;
+  const engine = await getEngine(modelId);
+  const started = performance.now();
+
+  const history = trimHistory(messages);
+  const payload = system ? [{ role: "system", content: system }, ...history] : history;
+
+  let reply = "";
+  let completionTokens = 0;
+
+  const stream = await engine.chat.completions.create({
+    messages: payload,
+    temperature: opts.temperature ?? 0.7,
+    max_tokens: opts.maxTokens ?? 800,
+    stream: true,
+    stream_options: { include_usage: true },
+  });
+
+  for await (const chunk of stream) {
+    if (signal?.aborted) {
+      await interrupt();
+      break;
+    }
+    const delta = chunk.choices?.[0]?.delta?.content ?? "";
+    if (delta) {
+      reply += delta;
+      onToken(delta, reply);
+    }
+    if (chunk.usage?.completion_tokens) completionTokens = chunk.usage.completion_tokens;
+  }
+
+  const elapsedMs = performance.now() - started;
+  return {
+    reply,
+    elapsedMs,
+    completionTokens: completionTokens || Math.round(reply.length / 4),
+    tokensPerSecond: tps(completionTokens || reply.length / 4, elapsedMs),
+  };
+}
+
+/** Keep the most recent turns that fit, estimating four characters per token. */
+function trimHistory(messages, budgetTokens = 2600) {
+  const kept = [];
+  let used = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const cost = Math.ceil((messages[i].content?.length ?? 0) / 4) + 4;
+    if (used + cost > budgetTokens && kept.length) break;
+    kept.unshift(messages[i]);
+    used += cost;
+  }
+  return kept;
 }
 
 /* ------------------------------------------------------------------ *

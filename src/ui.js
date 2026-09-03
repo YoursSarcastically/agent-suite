@@ -17,6 +17,7 @@
 
 import { el, fill, clear } from "./dom.js";
 import { icon } from "./icons.js";
+import { PROFILE } from "./profile.js";
 import {
   MODELS, DEFAULT_MODEL, checkSupport, describeDevice,
   getEngine, isLoaded, loadedModel, runAgent, interrupt, unload,
@@ -24,16 +25,16 @@ import {
 } from "./runtime.js";
 import { read, write } from "./store.js";
 
+import chat from "./apps/chat.js";
 import braindump from "./apps/braindump.js";
 import journal from "./apps/journal.js";
 import pile from "./apps/pile.js";
 import recommend from "./apps/recommend.js";
 import workbench from "./apps/workbench.js";
 
-/** Byline. Replace with the real profile URL. */
-const AUTHOR = { name: "Suraj", linkedin: "https://www.linkedin.com/in/YOUR-PROFILE/" };
+const AUTHOR = { name: PROFILE.name, linkedin: PROFILE.links.linkedin };
 
-const APPS = [braindump, pile, journal, recommend, workbench];
+const APPS = [chat, braindump, pile, journal, recommend, workbench];
 const byId = (id) => APPS.find((a) => a.id === id);
 
 const view = document.getElementById("view");
@@ -48,11 +49,17 @@ const bar = document.getElementById("bar");
 const device = { label: "" };
 const support = checkSupport();
 
+/** Anything worth coming back to read without starting the engine. */
+const hasSavedData = () =>
+  ["braindump:tasks", "journal:entries", "pile:articles", "chat:messages"]
+    .some((key) => (read(key, []) ?? []).length > 0);
+
 /** Whether this browser has downloaded these weights before, for honest wording. */
 const seenBefore = () => read("engine:loaded", []).includes(DEFAULT_MODEL);
 
 let loading = false;
 let outOfSpace = false;
+let browsing = false;
 let progressText = "";
 let progressPct = 0;
 
@@ -146,6 +153,20 @@ function paintProgress() {
 
 const labelFor = (id) => MODELS.find((m) => m.id === id)?.label ?? id;
 
+/**
+ * Load the engine if an action needs it.
+ *
+ * Reached only from someone who skipped the gate to read saved data and then
+ * pressed a button that generates. The wait is the same; the difference is that
+ * they chose it.
+ */
+async function ensureModel() {
+  if (isLoaded()) return;
+  toast("Starting the model — this takes a moment the first time.");
+  await load(DEFAULT_MODEL);
+  if (!isLoaded()) throw new Error("The model could not be started.");
+}
+
 /* ------------------------------------------------------------------ *
  * what this tab has actually done
  * ------------------------------------------------------------------ */
@@ -168,7 +189,18 @@ const ctx = {
   modelId: () => loadedModel() ?? DEFAULT_MODEL,
   toast,
 
+  /** Chat calls the engine directly, so it needs the same on-demand load. */
+  ensureModel,
+
+  /** Chat bypasses run(), so it records its own work against the same counters. */
+  record(result) {
+    stats.runs++;
+    stats.tokens += result.completionTokens ?? 0;
+    stats.tps = result.tokensPerSecond || stats.tps;
+  },
+
   async run(agent, input, opts = {}) {
+    await ensureModel();
     const result = await runAgent(agent, input, { modelId: ctx.modelId(), ...opts });
     stats.runs++;
     stats.tokens += result.completionTokens ?? 0;
@@ -283,12 +315,12 @@ function gate() {
   }, loading ? "Loading…" : returning ? "Start" : `Download ${model.vram.replace("~", "")}`);
 
   return el("section.gate", {},
-    el("h1", {}, "An AI that runs", el("br"),
+    el("h1", {}, "AI (LLM) that runs", el("br"),
       el("span.dim", { text: "entirely in this browser tab." })),
     el("p.lede", {
       text: returning
         ? "The model is already downloaded. Starting it takes a few seconds."
-        : "Four small apps, powered by an AI model that downloads once and then runs " +
+        : "Five small apps, powered by an AI model that downloads once and then runs " +
           "entirely on your own computer. Nothing you type is ever sent anywhere. " +
           "No account, no subscription, and it works without internet.",
     }),
@@ -307,14 +339,16 @@ function gate() {
       : el("div.gate-actions", {}, go, picker),
 
     !loading && el("div.proof", {}, [
-      [model.vram.replace("~", ""), "downloads once"],
       [device.label || "your GPU", "runs on"],
-      ["0", "data sent"],
       ["Free", "always"],
     ].map(([n, k]) => el("div.proof-item", {},
       el("span.n", { text: n }), el("span.k", { text: k })))),
 
-    byline(),
+    !loading && hasSavedData() && el("button.btn.btn-ghost.browse", {
+      onclick: () => { browsing = true; render(); },
+    }, "Skip — just show my saved data"),
+
+    !loading && authorCard(),
 
     !loading && progressText.startsWith("Could not load") &&
       el("p.small.dim", { style: { marginTop: "18px" }, text: progressText }),
@@ -343,7 +377,7 @@ function gate() {
  * with a dead byline link is worse than a byline without one.
  */
 function byline() {
-  const linked = AUTHOR.linkedin && !AUTHOR.linkedin.includes("YOUR-PROFILE");
+  const linked = Boolean(AUTHOR.linkedin);
   return el("p.byline", {},
     "Built by ",
     linked
@@ -358,26 +392,67 @@ function home() {
 
   fill(view,
     el("section.hero-home", {},
-      el("h1", { text: "Four apps." }),
+      el("h1", {}, "Five apps.", el("br"),
+        el("span.dim", { text: "Nothing you type leaves this tab." })),
       el("div.proof", {}, [
-        [labelFor(loadedModel()), "running on " + (device.label || "your GPU")],
-        [stats.runs ? `${stats.tps}` : "—", "words per second"],
+        [labelFor(loadedModel()), device.label ? `on ${device.label}` : "loaded"],
+        [stats.runs ? String(stats.tps) : "—", "tokens per second"],
         [String(stats.runs), stats.runs === 1 ? "request, all local" : "requests, all local"],
-        ["Free", "always"],
       ].map(([n, k]) => el("div.proof-item", {},
         el("span.n", { text: n }), el("span.k", { text: k }))))),
 
     el("div.launcher", {}, apps.map(card)),
 
+    el("section.panel.why", {},
+      el("h3", { text: "Why it runs here" }),
+      el("div.why-grid", {}, [
+        ["Private", "The model is on your machine, so what you type never has to leave it."],
+        ["Free", "No account, no key, no bill. Using it costs you nothing but battery."],
+        ["Offline", "Once the model is downloaded it keeps working with no internet at all."],
+      ].map(([t, d]) => el("div", {},
+        el("strong", { text: t }),
+        el("p.muted.small", { style: { marginTop: "6px" }, text: d }))))),
+
     el("button.under", { onclick: () => (location.hash = "workbench") },
       icon(bench.icon), "Under the hood", el("span.dim", { text: "→" })),
 
-    byline()
+    authorCard()
   );
 }
 
-function card(app) {
-  return el("button.app-card", { type: "button", onclick: () => (location.hash = app.id) },
+/**
+ * The author pill.
+ *
+ * One row, fully rounded, on the home screen only - a person's name should be
+ * present without becoming a second page. Content comes from profile.js and
+ * nothing in it is inferred.
+ */
+function authorCard() {
+  const p = PROFILE;
+  return el("section.author", {},
+    p.photo
+      ? el("img.avatar", { src: p.photo, alt: "", width: 42, height: 42, loading: "lazy" })
+      : el("div.avatar", { "aria-hidden": "true" }, p.initials),
+    el("div.author-text", {},
+      el("p.author-name", {}, p.name, el("span.dim", { text: " · " }), 
+        el("span.author-role", { text: p.role })),
+      el("p.author-tags", { text: p.works_with.join(" · ") })),
+    el("div.author-actions", {},
+      el("a.btn.btn-primary.btn-sm", {
+        href: p.links.linkedin, target: "_blank", rel: "noopener noreferrer",
+      }, "LinkedIn", el("span.byline-arrow", { text: "↗" })),
+      el("a.btn.btn-sm", {
+        href: p.links.github, target: "_blank", rel: "noopener noreferrer",
+      }, "GitHub", el("span.byline-arrow", { text: "↗" })))
+  );
+}
+
+function card(app, i) {
+  // Five cards in an even grid always leave a ragged last row. The first one
+  // spans two columns instead, which fills 3-up and 2-up exactly and gives the
+  // most-used app the prominence it should have had anyway.
+  return el(`button.app-card${i === 0 ? ".app-card-wide" : ""}`,
+    { type: "button", onclick: () => (location.hash = app.id) },
     el("div.app-icon", {}, icon(app.icon)),
     el("h3", { text: app.name }),
     el("p.blurb", { text: app.blurb }));
@@ -405,9 +480,11 @@ function render() {
   if (barTrack) barTrack.hidden = !loading;
 
   if (!support.ok) return fill(view, unsupported());
-  // The gate is not advisory. An app with no engine behind it is a form that
-  // throws, so the route simply does not resolve until there is one.
-  if (!isLoaded()) return fill(view, gate());
+  // The gate blocks generating, not reading. Coming back to look at yesterday's
+  // tasks should not cost two minutes and a gigabyte of GPU memory, so anyone
+  // with saved data can walk straight past it; the model loads on the first
+  // action that actually needs it.
+  if (!isLoaded() && !browsing) return fill(view, gate());
 
   const app = byId(location.hash.replace(/^#/, ""));
   app ? openApp(app) : home();

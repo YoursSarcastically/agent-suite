@@ -60,8 +60,9 @@ export const BRAINDUMP = {
   spine: "tasks",
   fill: { owners: "me", due_dates: "someday", priorities: "someday", projects: "general", minutes: 15 },
   buildPrompt: (input) =>
-    `Turn this into tasks. Every array must have exactly one entry per task, in the same order — ` +
-    `repeat a value rather than shortening an array.\n\n${input}`,
+    `Turn this into tasks — one task per thing actually written below, no extras.\n` +
+    `Every array must have exactly one entry per task, in the same order; repeat a value ` +
+    `rather than shortening an array.\n\n${input}`,
 };
 
 export const NEXT_ACTION = {
