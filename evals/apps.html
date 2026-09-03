@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Suite — app latency &amp; accuracy</title>
+<link rel="stylesheet" href="../src/styles.css" />
+<style>
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  th { color: var(--ink-3); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pass { font-weight: 600; }
+  .fail { font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="wordmark" href="../"><span class="dot"></span> Agent Suite</a>
+    <span class="spacer"></span>
+    <a class="btn btn-ghost btn-sm" href="run.html">Golden set</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section style="padding: 32px 0 28px; max-width: 46ch;">
+    <h1 style="font-size: clamp(30px,4.2vw,44px); margin-bottom: 16px;">App latency</h1>
+    <p class="muted">
+      How long a real app takes end to end, and whether the chain behind it holds together.
+      Different question from the golden set: an agent can be accurate and still make an app
+      unusable, because the app runs three of them in a row while someone waits.
+    </p>
+  </section>
+
+  <section class="panel">
+    <div class="row">
+      <select id="model" class="field"></select>
+      <button id="go" class="btn btn-primary">Run</button>
+      <span id="status" class="small dim"></span>
+    </div>
+    <div class="bar-track" id="bar-track" hidden style="margin-top:16px"><div class="bar" id="bar"></div></div>
+    <div class="proof" id="summary" hidden style="margin-top:24px"></div>
+  </section>
+
+  <section class="panel">
+    <table>
+      <thead><tr>
+        <th>App</th><th>Agent</th><th class="num">Latency</th><th class="num">tok/s</th>
+        <th class="num">out</th><th>Result</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script type="module" src="apps-page.js"></script>
+</body>
+</html>

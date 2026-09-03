@@ -30,8 +30,8 @@
  */
 
 import { el, fill } from "../dom.js";
-import { TASTE, PICK } from "../app-agents.js";
-import { search, forPrompt, networkLog, clearNetworkLog } from "../catalog.js";
+import { TASTE, PICK, pickedFrom } from "../app-agents.js";
+import { search, enrichFilms, forPrompt, networkLog, clearNetworkLog } from "../catalog.js";
 
 const MEDIA_LABEL = { film: "films", show: "shows", book: "books" };
 
@@ -48,17 +48,11 @@ const isKeywords = (s) => {
 };
 
 /**
- * Pair each pick with its reason, dropping anything out of range.
- *
- * `picks` holds numbers into a list the model was shown, and it will
- * occasionally return an index that was never on it. The schema cannot express
- * "must be a valid index", so the bound is checked here rather than trusted.
+ * The slots hold numbers into a list the model was shown, and it will
+ * occasionally name one that was never on it. A grammar cannot express "must be
+ * a valid index", so the bound is checked rather than trusted.
  */
-function valid(chosen, pool) {
-  return (chosen?.picks ?? [])
-    .map((n, i) => ({ item: pool[n - 1], why: chosen.why?.[i] ?? "" }))
-    .filter((p) => p.item);
-}
+const valid = (chosen, pool) => pickedFrom(chosen, pool);
 
 const SAMPLES = [
   "something like Nope but funnier",
@@ -71,7 +65,7 @@ export default {
   id: "recommend",
   name: "Recommend Me",
   icon: "recommend",
-  blurb: "Describe the mood. Get films, shows and books — with a line on why each.",
+  blurb: "Films, shows and books",
   tag: "Model picks the words, then ranks what three real catalogues return",
 
   mount(root, ctx) {
@@ -92,7 +86,7 @@ export default {
             onclick: () => { input.value = s; go(); },
           }, s))),
         el("p.small.dim", { style: { marginTop: "14px" },
-          text: "The only app here that uses the internet — it looks up real titles so the model cannot invent them." })),
+          text: "Uses the internet to look up real titles. The model never invents one." })),
       trail.node,
       out,
       netEl
@@ -167,6 +161,16 @@ export default {
           // part that grows without bound, so it is capped before it can push
           // the generation past max_tokens.
           const shortlist = pool.slice(0, 10);
+
+          // iTunes gives a title, a year and a one-word genre. That is thin
+          // material to rank on, so the shortlist - and only the shortlist -
+          // gets a real genre list, plot and IMDb rating before the model sees
+          // it. Bounded on purpose: ten titles a search, cached, free tier.
+          if (shortlist.some((it) => it.kind === "film")) {
+            trail.plan("enrich", "Looking up ratings and plots for the films worth considering");
+            await enrichFilms(shortlist, { signal });
+            renderNetwork();
+          }
           const ask = (items, blurb) =>
             `THEY ASKED FOR: "${mood}"\n` +
             `${plan.vibe?.length ? `VIBE: ${plan.vibe.join(", ")}\n` : ""}` +
@@ -225,7 +229,8 @@ export default {
               el("span.kind", { text: item.kind }),
               el("span.title", { text: item.title }),
               el("span.meta", {
-                text: [item.year, item.by, item.rating ? `★ ${item.rating}` : ""].filter(Boolean).join(" · "),
+                text: [item.year, item.runtime, item.by, item.rating ? `★ ${item.rating}` : ""]
+                  .filter(Boolean).join(" · "),
               }),
               why && el("span.why", { text: why }),
               item.link && el("a.small", { href: item.link, target: "_blank", rel: "noopener noreferrer",

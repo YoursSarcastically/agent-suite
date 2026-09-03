@@ -18,13 +18,38 @@
 
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 
-/** Small enough to download once and run on an integrated GPU. */
-export const DEFAULT_MODEL = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+/**
+ * Models.
+ *
+ * Llama 3.2 3B is the default because it is the one that measurably works.
+ * `evals/apps.html` scores it 8/9 on the app suite at ~10 tok/s; Qwen2.5 1.5B
+ * passes fewer and, more visibly, cannot follow "give me genre keywords, not
+ * words from my sentence" however the prompt is written - it answers "something
+ * like Nope but funnier" with the search terms `funnier` and `Nope`, where the
+ * 3B answers `horror comedy` and `sci-fi comedy`.
+ *
+ * Qwen3 is deliberately absent, and it is worth saying why, because it is the
+ * obvious thing to reach for and it does not work here.
+ *
+ * Qwen3 is a hybrid reasoning model: it wants to open a <think> block before
+ * answering. Under a JSON grammar there is nowhere for that to go - at that
+ * position the decoder accepts the object or whitespace, nothing else - so the
+ * model emits whitespace, and keeps emitting it. Qwen3 1.7B produced 900 tokens
+ * of newlines in 103 seconds and then failed to parse, which is the one thing a
+ * grammar-constrained generation is supposed to make impossible.
+ *
+ * `/no_think` is Qwen3's own switch for this and it had no effect through
+ * WebLLM's chat template, in the system prompt or in the user turn. Both were
+ * measured. Until that is fixed upstream, or WebLLM exposes
+ * `enable_thinking: false`, reasoning models and grammar-constrained decoding
+ * do not compose - and shipping a picker option that always fails is worse than
+ * not offering it.
+ */
+export const DEFAULT_MODEL = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 
-/** Larger fallbacks for machines that can afford them. */
 export const MODELS = [
-  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen2.5 1.5B", vram: "~1.1 GB" },
-  { id: "Llama-3.2-3B-Instruct-q4f16_1-MLC", label: "Llama 3.2 3B", vram: "~2.3 GB" },
+  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen2.5 1.5B", vram: "~1.6 GB" },
+  { id: "Llama-3.2-3B-Instruct-q4f16_1-MLC", label: "Llama 3.2 3B", vram: "~2.2 GB" },
   { id: "Qwen2.5-7B-Instruct-q4f16_1-MLC", label: "Qwen2.5 7B", vram: "~5.1 GB" },
 ];
 

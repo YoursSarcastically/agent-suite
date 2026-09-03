@@ -26,12 +26,12 @@ export default {
   id: "journal",
   name: "Journal",
   icon: "journal",
-  blurb: "Write whatever. It quietly files the mood, the people, and the promises.",
+  blurb: "Write. It files the rest.",
   tag: "Per-entry agent + a pattern agent that may decline",
 
   mount(root, ctx) {
     const input = el("textarea.field", {
-      placeholder: "How was today? No structure needed — write like you'd write to yourself.",
+      placeholder: "How was today?",
       rows: 7,
     });
     const historyEl = el("div.stack");

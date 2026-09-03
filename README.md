@@ -88,6 +88,47 @@ This matters most in Journal, which can return `found: false` when asked for a p
 
 ---
 
+## Measured, on a 2-core Apple GPU
+
+`evals/apps.html` runs each app's real agent chain and reports latency per call.
+The golden set asks whether an agent classifies correctly; this asks whether the
+app is usable, which is a different question — an agent can be accurate and
+still make an app painful, because the app runs three of them while you wait.
+
+**Llama 3.2 3B — 8/9 checks passed, ~10 tok/s median, 134s for the whole suite:**
+
+| App | End to end | Slowest call |
+|---|---|---|
+| Journal | 18.0s | `journal-read` 9.5s |
+| The Pile | 25.0s | `shelf-read` 14.8s |
+| Braindump | 26.7s | `braindump` 19.3s |
+| Recommend Me | 64.0s | `pick` — truncated at 55.4s |
+
+That single failure was the most useful result in the suite, because it is the
+README's own lesson wearing a different hat. `picks` was an array with
+`maxItems: 4` — and **`maxItems` is an assertion the structural decoder ignores,
+exactly like `minimum` and `maximum`.** Under the grammar an array is a state
+machine that may always emit one more element, so nothing stopped the model
+writing reasons until `max_tokens` cut it off, and a truncated object under a
+grammar is the one thing that cannot be parsed.
+
+Arrays cannot be bounded by a schema the decoder only structurally implements.
+Fixed fields can: `pick_1/why_1/pick_2/why_2/pick_3/why_3` is bounded by
+construction, cannot run away, and takes the alignment problem with it.
+
+### Qwen3 does not work here
+
+Reasoning models and grammar-constrained decoding do not compose, and the
+failure is loud. Qwen3 wants to open a `<think>` block before answering; under a
+JSON grammar the decoder accepts the object or whitespace and nothing else, so
+the model emits whitespace and keeps going. Qwen3 1.7B produced **900 tokens of
+newlines in 103 seconds** and then failed to parse.
+
+`/no_think` is Qwen3's own switch for this. It had no effect through WebLLM's
+chat template, in the system prompt or in the last user turn — both measured.
+So Qwen3 is not in the picker, because an option that always fails is worse than
+an option that is missing.
+
 ## Layout
 
 ```
@@ -99,6 +140,7 @@ src/catalog.js      the only file that touches the network, and it logs every re
 src/apps/*.js       one file per app
 evals/goldens.json  golden set, refusal cases tagged
 evals/run.js        assertion-based runner
+evals/apps.js       app-level latency and accuracy
 ```
 
 ## Evals

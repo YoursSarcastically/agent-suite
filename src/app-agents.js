@@ -25,7 +25,10 @@ const score = (max, description) => ({ type: "number", minimum: 0, maximum: max,
 export const BRAINDUMP = {
   id: "braindump",
   temperature: 0,
-  maxTokens: 700,
+  // Six parallel arrays over N tasks is the largest output any agent here
+  // produces, and arrays are unbounded under a grammar - a model that starts
+  // repeating a column has no structural reason to stop.
+  maxTokens: 900,
   system:
     "You turn a messy brain dump into concrete tasks. One task per thing the person actually has " +
     "to do. Keep their own words where you can - they will recognise their task faster than your " +
@@ -270,47 +273,63 @@ export const TASTE = {
     `phrases of one to three words each, and only the mediums they actually asked for.`,
 };
 
+/**
+ * Ranking, as fixed fields rather than arrays.
+ *
+ * This started as `picks: integer[]` and `why: string[]` with `maxItems: 4`,
+ * and it failed in the most instructive way available: given five candidates it
+ * generated for fifty-five seconds and truncated mid-object.
+ *
+ * `maxItems` is an assertion, and the constrained decoder implements the
+ * structural subset only - exactly the same lesson as `minimum`/`maximum`
+ * silently not holding. Under the grammar an array is a state machine that may
+ * always emit another element, so nothing stops the model writing reasons until
+ * max_tokens cuts it off, and a truncated object under a grammar is the one
+ * thing that cannot be parsed.
+ *
+ * Three numbered slots are bounded by construction. The generation cannot run
+ * away because there is nowhere for it to run to, `0` is how the model declines
+ * a slot, and the alignment problem disappears with the arrays that caused it.
+ */
 export const PICK = {
   id: "pick",
   temperature: 0.3,
-  // Everything about this budget is set by throughput, not by quality. At the
-  // ~15 tok/s a 1.5B model manages on an integrated GPU, a thousand tokens of
-  // output is over a minute of staring at a spinner. Given an unbounded list
-  // the model writes a paragraph about every candidate; told to pick four and
-  // keep each to a line, the whole generation fits in a few hundred tokens.
-  maxTokens: 560,
+  maxTokens: 420,
   system:
     "You choose from a numbered list of real titles and say why each suits the person.\n\n" +
     "Rules:\n" +
-    "- Choose ONLY numbers that appear in the list.\n" +
-    "- Choose AT MOST FOUR. Fewer is fine and better than padding.\n" +
-    "- Each reason is ONE sentence, under twenty words, written to them.\n" +
+    "- Fill pick_1, pick_2 and pick_3 with numbers FROM THE LIST, best first.\n" +
+    "- Use 0 for a slot you do not want. Two good picks beat three padded ones.\n" +
+    "- Each why_N is ONE sentence, under twenty words, written to them.\n" +
+    "- NEVER put the title in the reason. It is already on screen; repeating it says nothing.\n" +
     "- No plot summary - they can read the blurb. Say why THIS one, for THIS mood.\n" +
-    "- If nothing on the list really fits, pick one or two and set good_match to false.",
+    "- If nothing on the list really fits, set good_match to false.\n\n" +
+    "Good reasons look like:\n" +
+    "  \"Same slow-dread build, but the jokes land instead of the scares.\"\n" +
+    "  \"Short, silly, and it never asks you to concentrate.\"\n" +
+    "Bad reasons: the title repeated, or \"a great film you will enjoy\".",
   schema: {
     type: "object",
     properties: {
-      picks: {
-        type: "array",
-        items: { type: "integer", minimum: 1 },
-        maxItems: 4,
-        description: "At most four numbers from the list, best first",
-      },
-      why: {
-        type: "array",
-        items: { type: "string" },
-        maxItems: 4,
-        description: "One short sentence per pick, in the same order",
-      },
+      pick_1: { type: "integer", minimum: 0, description: "Best match, by number. 0 for none." },
+      why_1: { type: "string", description: "One sentence. Never the title." },
+      pick_2: { type: "integer", minimum: 0, description: "Second, or 0" },
+      why_2: { type: "string" },
+      pick_3: { type: "integer", minimum: 0, description: "Third, or 0" },
+      why_3: { type: "string" },
       good_match: { type: "boolean", description: "False if the catalogue did not really have it" },
     },
-    required: ["picks", "why", "good_match"],
+    required: ["pick_1", "why_1", "pick_2", "why_2", "pick_3", "why_3", "good_match"],
   },
-  aligned: [["picks", "why"]],
-  spine: "picks",
-  fill: { why: "" },
-  buildPrompt: (input) => `${input}\n\nPick the best few and say why each suits them.`,
+  buildPrompt: (input) => `${input}\n\nPick up to three and say why each suits them.`,
 };
+
+/** The slots, back into the list shape the UI wants. */
+export const pickedFrom = (data, pool) =>
+  [1, 2, 3]
+    .map((n) => ({ index: data?.[`pick_${n}`] ?? 0, why: data?.[`why_${n}`] ?? "" }))
+    .filter((p) => p.index >= 1 && p.index <= pool.length)
+    .map((p) => ({ item: pool[p.index - 1], why: p.why }));
 
 /* ================================================================== *
  * registry

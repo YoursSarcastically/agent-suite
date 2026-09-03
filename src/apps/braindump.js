@@ -22,12 +22,12 @@ export default {
   id: "braindump",
   name: "Braindump",
   icon: "braindump",
-  blurb: "Type the way your head actually works. Get a real list back.",
+  blurb: "Messy thoughts, real tasks",
   tag: "Extraction · one agent, one decision agent",
 
   mount(root, ctx) {
     const input = el("textarea.field", {
-      placeholder: "Everything that's rattling around. Punctuation optional.",
+      placeholder: "Everything that's rattling around.",
       spellcheck: false,
       rows: 5,
     });
@@ -49,7 +49,7 @@ export default {
       el(
         "section.panel",
         {},
-        el("label.label", { text: "Brain dump" }),
+        el("label.label", { text: "Dump" }),
         input,
         el("div.row", { style: { marginTop: "14px" } }, sortBtn, nextBtn, sampleBtn)
       ),

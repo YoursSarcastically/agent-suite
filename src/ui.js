@@ -2,9 +2,17 @@
  * The shell.
  *
  * One page, hash routing, and - the part that matters - one engine shared by
- * every app. Loading weights costs a gigabyte on the first visit and several
- * seconds on every one after, so navigating between apps must never reload the
- * page. That single constraint is why this is a router rather than six files.
+ * every app. Loading weights costs well over a gigabyte on the first visit and
+ * a long GPU upload on every one after, so navigating between apps must never
+ * reload the page. That single constraint is why this is a router rather than
+ * four separate files.
+ *
+ * The other structural decision is the gate. Nothing here works without a
+ * model, and a browser cannot borrow one - so rather than letting someone type
+ * into a box that will reject them, the apps do not exist until the engine is
+ * ready. It is the one piece of onboarding an in-browser LLM genuinely needs,
+ * because the wait is real and unavoidable and pretending otherwise just moves
+ * the confusion later.
  */
 
 import { el, fill, clear } from "./dom.js";
@@ -13,6 +21,7 @@ import {
   MODELS, DEFAULT_MODEL, checkSupport, describeDevice,
   getEngine, isLoaded, loadedModel, runAgent, interrupt, unload,
 } from "./runtime.js";
+import { read, write } from "./store.js";
 
 import braindump from "./apps/braindump.js";
 import journal from "./apps/journal.js";
@@ -25,96 +34,107 @@ const byId = (id) => APPS.find((a) => a.id === id);
 
 const view = document.getElementById("view");
 const toastEl = document.getElementById("toast");
-
-/* ------------------------------------------------------------------ *
- * engine boot
- * ------------------------------------------------------------------ */
-
-const modelSelect = el("select.field",
-  {}, MODELS.map((m) => el("option", { value: m.id, selected: m.id === DEFAULT_MODEL },
-    `${m.label} · ${m.vram}`)));
-
-const statusEl = el("span.small.dim", { text: "No model loaded" });
 const barTrack = document.getElementById("bar-track");
 const bar = document.getElementById("bar");
 
-const loadBtn = el("button.btn.btn-primary.btn-sm", { onclick: load }, "Load model");
-const devicePill = el("span.pill", { hidden: true });
+/* ------------------------------------------------------------------ *
+ * engine
+ * ------------------------------------------------------------------ */
+
+const device = { label: "" };
+const support = checkSupport();
+
+/** Whether this browser has downloaded these weights before, for honest wording. */
+const seenBefore = () => read("engine:loaded", []).includes(DEFAULT_MODEL);
+
+let loading = false;
+let progressText = "";
+let progressPct = 0;
 
 describeDevice().then((d) => {
-  devicePill.textContent = d.label;
-  devicePill.hidden = false;
+  device.label = d.label;
+  render();
 });
 
-const support = checkSupport();
-if (!support.ok) {
-  loadBtn.disabled = true;
-  statusEl.textContent = support.reason;
-}
-
-async function load() {
-  const modelId = modelSelect.value;
-  loadBtn.disabled = modelSelect.disabled = true;
-  barTrack.hidden = false;
+async function load(modelId) {
+  if (loading) return;
+  loading = true;
+  progressPct = 0;
+  progressText = "Starting…";
+  render();
 
   try {
     if (isLoaded() && loadedModel() !== modelId) await unload();
     await getEngine(modelId, (progress, text) => {
-      bar.style.width = `${Math.round(progress * 100)}%`;
-      statusEl.textContent = text || "Loading…";
+      progressPct = Math.round((progress ?? 0) * 100);
+      progressText = text || "Loading…";
+      paintProgress();
     });
-    bar.style.width = "100%";
-    statusEl.textContent = `Ready · ${MODELS.find((m) => m.id === modelId)?.label ?? modelId}`;
-    loadBtn.textContent = "Reload";
-    setTimeout(() => (barTrack.hidden = true), 700);
+    write("engine:loaded", [...new Set([...read("engine:loaded", []), modelId])]);
+    toast(`${labelFor(modelId)} is running on ${device.label || "your GPU"}.`);
   } catch (err) {
-    statusEl.textContent = `Failed: ${err.message}`;
+    progressText = `Could not load: ${err.message}`;
   } finally {
-    loadBtn.disabled = modelSelect.disabled = false;
+    loading = false;
+    render();
   }
 }
 
-/** Apps call this before running anything; first use triggers the download. */
-async function ensureModel() {
-  if (isLoaded()) return;
-  toast("Loading the model — first time is a big download, then it's cached.");
-  await load();
-  if (!isLoaded()) throw new Error("The model is not loaded.");
+/** Progress updates many times a second; repainting the whole view would thrash. */
+function paintProgress() {
+  const line = document.getElementById("progress-line");
+  if (line) line.textContent = progressText;
+  if (barTrack) barTrack.hidden = false;
+  if (bar) bar.style.width = `${progressPct}%`;
+  const pct = document.getElementById("progress-pct");
+  if (pct) pct.textContent = `${progressPct}%`;
 }
 
-document.getElementById("boot").append(
-  el("span.dot-live"), statusEl, devicePill, modelSelect, loadBtn
-);
+const labelFor = (id) => MODELS.find((m) => m.id === id)?.label ?? id;
+
+/* ------------------------------------------------------------------ *
+ * what this tab has actually done
+ * ------------------------------------------------------------------ */
+
+/**
+ * The value proposition is not a sentence, it is a number: generations that
+ * happened here, at this speed, for nothing. Claiming it is weak; counting it
+ * is not, so the home screen shows a running total rather than an adjective.
+ */
+const stats = { runs: 0, tokens: 0, tps: 0 };
 
 /* ------------------------------------------------------------------ *
  * shared context handed to every app
  * ------------------------------------------------------------------ */
 
 let activeController = null;
-/** Live status lines, so a finished run always clears its own. */
 const trails = new Set();
 
 const ctx = {
-  modelId: () => modelSelect.value,
+  modelId: () => loadedModel() ?? DEFAULT_MODEL,
   toast,
 
-  /** Run one agent. Loads the model on first use rather than scolding the user. */
   async run(agent, input, opts = {}) {
-    await ensureModel();
-    return runAgent(agent, input, { modelId: modelSelect.value, ...opts });
+    const result = await runAgent(agent, input, { modelId: ctx.modelId(), ...opts });
+    stats.runs++;
+    stats.tokens += result.completionTokens ?? 0;
+    stats.tps = result.tokensPerSecond ?? stats.tps;
+    return result;
   },
 
   /**
-   * Wrap a long action: disable the button, offer a stop, surface failures as
-   * a toast rather than a silent dead end. Every app routes through this so
-   * that cancelling actually reaches the engine.
+   * Wrap a long action: disable the button, offer a stop, surface failures as a
+   * toast rather than a silent dead end. Every app routes through this so that
+   * cancelling actually reaches the engine.
    */
   async busy(button, fn) {
     if (activeController) return toast("Something is already running.");
     activeController = new AbortController();
 
     const original = button?.textContent;
-    const stopBtn = el("button.btn.btn-sm", { onclick: () => { activeController?.abort(); interrupt(); } }, "Stop");
+    const stopBtn = el("button.btn.btn-sm", {
+      onclick: () => { activeController?.abort(); interrupt(); },
+    }, "Stop");
     if (button) {
       button.disabled = true;
       button.textContent = "Working…";
@@ -142,13 +162,11 @@ const ctx = {
   /**
    * Progress.
    *
-   * This was a stepped panel listing every decision the loop made - which was
+   * This was a stepped panel listing every decision the loop made, which was
    * the most interesting thing on screen for about a week and clutter forever
-   * after. What a person waiting thirty seconds needs is one line saying what
-   * is happening now, so that is all this is. The full step sequence is still
-   * available where it belongs, in the console via the loop's onStep.
-   *
-   * The API is unchanged so apps did not have to be rewritten around it.
+   * after. What someone waiting thirty seconds needs is one line saying what is
+   * happening now. The full sequence is still available through the loop's
+   * onStep, in the console.
    */
   trail() {
     const node = el("p.working", { hidden: true });
@@ -178,32 +196,92 @@ const ctx = {
 };
 
 /* ------------------------------------------------------------------ *
- * routing
+ * screens
  * ------------------------------------------------------------------ */
 
+/** Nothing works without WebGPU, so say so once and stop. */
+function unsupported() {
+  return el("section.gate", {},
+    el("h1", { text: "This needs WebGPU." }),
+    el("p.lede", { text: support.reason }));
+}
+
+/**
+ * Onboarding.
+ *
+ * One decision and one wait. The size is stated up front because it is large
+ * and finding that out through a stalled progress bar is worse than being
+ * told; the second visit says so too, because a cached load is a different
+ * promise from a cold one.
+ */
+function gate() {
+  const modelId = DEFAULT_MODEL;
+  const model = MODELS.find((m) => m.id === modelId);
+  const returning = seenBefore();
+
+  const picker = el("select.field", { disabled: loading },
+    MODELS.map((m) => el("option", { value: m.id, selected: m.id === modelId },
+      `${m.label} · ${m.vram}`)));
+
+  const go = el("button.btn.btn-primary.btn-lg", {
+    disabled: loading,
+    onclick: () => load(picker.value),
+  }, loading ? "Loading…" : returning ? "Start" : `Download ${model.vram.replace("~", "")}`);
+
+  return el("section.gate", {},
+    el("h1", {}, "An LLM,", el("br"), el("span.dim", { text: "in this tab." })),
+    el("p.lede", {
+      text: returning
+        ? "The weights are cached. This takes a few seconds while they move onto the GPU."
+        : "Four small apps run on your own GPU. Nothing you type is sent anywhere, " +
+          "there is no account and no bill, and it keeps working offline.",
+    }),
+
+    loading
+      ? el("div.progress", {},
+          el("div.row", {},
+            el("span.small", { id: "progress-line", text: progressText }),
+            el("span.spacer"),
+            el("span.small.dim.nums", { id: "progress-pct", text: `${progressPct}%` })))
+      : el("div.gate-actions", {}, go, picker),
+
+    !loading && el("div.proof", {}, [
+      [device.label || "WebGPU", "runs on"],
+      [model.vram.replace("~", ""), "one-time download"],
+      ["0", "requests while you use it"],
+      ["$0.00", "billed, ever"],
+    ].map(([n, k]) => el("div.proof-item", {},
+      el("span.n", { text: n }), el("span.k", { text: k })))),
+
+    !loading && progressText.startsWith("Could not load") &&
+      el("p.small.dim", { style: { marginTop: "18px" }, text: progressText })
+  );
+}
+
 function home() {
+  const apps = APPS.filter((a) => a.id !== "workbench");
+  const bench = byId("workbench");
+
   fill(view,
-    el("section.hero", {},
-      el("h1", { text: "Four apps. Nothing leaves your laptop." }),
-      el("p.lede", {
-        text: "Every one runs on your own GPU, in this tab. No account, no API key, no bill, " +
-              "and they keep working with the wifi off." })),
-    el("div.launcher", {}, APPS.map(card)),
-    el("section.panel", {},
-      el("h3", { text: "Why the browser" }),
-      el("p.muted", { style: { marginTop: "10px" },
-        text: "Inference costs nothing here, so these apps can do things a metered one cannot: " +
-              "read back over every journal entry you have written, search a whole shelf on every " +
-              "question, throw away a set of search results and try different words. The bill for " +
-              "all of it is the same — your battery." }))
+    el("section.hero-home", {},
+      el("h1", { text: "Four apps." }),
+      el("div.proof", {}, [
+        [labelFor(loadedModel()), "on " + (device.label || "your GPU")],
+        [stats.runs ? `${stats.tps}` : "—", "tokens/sec"],
+        [String(stats.runs), stats.runs === 1 ? "generation here" : "generations here"],
+        ["$0.00", "billed"],
+      ].map(([n, k]) => el("div.proof-item", {},
+        el("span.n", { text: n }), el("span.k", { text: k }))))),
+
+    el("div.launcher", {}, apps.map(card)),
+
+    el("button.under", { onclick: () => (location.hash = "workbench") },
+      icon(bench.icon), "Under the hood", el("span.dim", { text: "→" }))
   );
 }
 
 function card(app) {
-  return el("button.app-card", {
-    type: "button",
-    onclick: () => (location.hash = app.id),
-  },
+  return el("button.app-card", { type: "button", onclick: () => (location.hash = app.id) },
     el("div.app-icon", {}, icon(app.icon)),
     el("h3", { text: app.name }),
     el("p.blurb", { text: app.blurb }));
@@ -213,23 +291,36 @@ function openApp(app) {
   const body = el("div.stack");
   fill(view, el("div.view", {},
     el("div.view-head", {},
-      el("button.btn.btn-ghost.btn-icon", { onclick: () => (location.hash = ""), "aria-label": "Back" }, "←"),
+      el("button.btn.btn-ghost.btn-icon", {
+        onclick: () => (location.hash = ""), "aria-label": "Back",
+      }, "←"),
       el("div.app-icon", {}, icon(app.icon)),
-      el("div", {},
-        el("h1", { text: app.name }),
-        el("p.sub", { text: app.blurb }),
-        app.tag && el("p.sub.dim.small", { style: { marginTop: "6px" }, text: app.tag }))),
+      el("div", {}, el("h1", { text: app.name }), el("p.sub", { text: app.blurb }))),
     body));
 
   app.mount(body, ctx);
 }
 
+/* ------------------------------------------------------------------ *
+ * routing
+ * ------------------------------------------------------------------ */
+
+function render() {
+  if (barTrack) barTrack.hidden = !loading;
+
+  if (!support.ok) return fill(view, unsupported());
+  // The gate is not advisory. An app with no engine behind it is a form that
+  // throws, so the route simply does not resolve until there is one.
+  if (!isLoaded()) return fill(view, gate());
+
+  const app = byId(location.hash.replace(/^#/, ""));
+  app ? openApp(app) : home();
+}
+
 function route() {
-  const id = location.hash.replace(/^#/, "");
-  const app = byId(id);
   activeController?.abort();
   window.scrollTo({ top: 0 });
-  app ? openApp(app) : home();
+  render();
 }
 
 addEventListener("hashchange", route);

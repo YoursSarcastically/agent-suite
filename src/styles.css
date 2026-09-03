@@ -154,7 +154,6 @@ main { padding-bottom: 120px; }
   margin-bottom: 40px;
 }
 .topbar-in { display: flex; align-items: center; gap: 10px; height: 48px; }
-.boot-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
 .topbar-bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; border: 0; border-radius: 0; background: transparent; }
 .hide-sm { display: inline-flex; }
 
@@ -269,11 +268,50 @@ select.field option { background: var(--surface); color: var(--ink); }
 
 .dot-live { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
 
+/* ---------- gate ---------- */
+/* The first screen is one decision and one wait, centred, with nothing else
+   competing for attention. */
+
+.gate {
+  min-height: min(76vh, 720px);
+  display: flex; flex-direction: column; justify-content: center;
+  max-width: 30ch;
+  padding: 40px 0;
+}
+.gate h1 { margin-bottom: 22px; }
+.gate .lede { font-size: 19px; line-height: 1.42; letter-spacing: -0.019em; color: var(--ink-2); max-width: 34ch; }
+
+.gate-actions { display: flex; align-items: center; gap: 12px; margin: 34px 0 44px; flex-wrap: wrap; }
+.btn-lg { padding: 15px 30px; font-size: 17px; }
+
+.progress { margin: 36px 0 44px; max-width: 46ch; }
+.progress .row { gap: 14px; }
+
+/* Facts, set as data rather than prose. */
+.proof { display: flex; gap: 36px; flex-wrap: wrap; }
+.proof-item { display: flex; flex-direction: column; gap: 3px; }
+.proof-item .n {
+  font-family: "SF Pro Display", -apple-system, sans-serif;
+  font-size: 19px; font-weight: 600; letter-spacing: -0.022em;
+  font-variant-numeric: tabular-nums;
+}
+.proof-item .k { font-size: 12px; color: var(--ink-3); letter-spacing: -0.004em; }
+
 /* ---------- home ---------- */
 
-.hero { padding: 96px 0 72px; max-width: 20ch; }
-.hero h1 { margin-bottom: 20px; }
-.hero .lede { font-size: 21px; line-height: 1.38; letter-spacing: -0.021em; color: var(--ink-2); max-width: 32ch; }
+.hero-home { padding: 40px 0 44px; }
+.hero-home h1 { margin-bottom: 26px; }
+
+.under {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 13px 20px; border-radius: var(--r-pill);
+  border: 0; background: transparent; color: var(--ink-2);
+  font: inherit; font-size: 15px; letter-spacing: inherit; cursor: pointer;
+  transition: background 0.25s var(--ease), color 0.25s var(--ease);
+}
+.under:hover { background: var(--fill); color: var(--ink); }
+.under .icon { font-size: 17px; }
+
 
 .launcher { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 120px; }
 
@@ -465,17 +503,15 @@ footer a { color: var(--ink-2); }
   .split, .split-wide { grid-template-columns: 1fr; }
   .wrap { width: min(1024px, 100% - 32px); }
   .panel { padding: 22px; }
-  .hero { padding: 40px 0 36px; max-width: none; }
+  .gate { min-height: auto; padding: 32px 0; }
+  .hero-home { padding: 24px 0 32px; }
 }
 @media (max-width: 740px) {
   .hide-sm { display: none; }
-  .boot-row .pill { display: none; }
-}
-@media (min-width: 741px) {
-  .boot-row .pill { display: none; }
 }
 @media (max-width: 520px) {
   .launcher { grid-template-columns: 1fr; }
+  .proof { gap: 22px; }
   .stat-row { gap: 22px; }
   .app-card { padding: 22px; }
 }

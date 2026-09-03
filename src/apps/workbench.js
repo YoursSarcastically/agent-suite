@@ -15,7 +15,7 @@ export default {
   id: "workbench",
   name: "Under the hood",
   icon: "workbench",
-  blurb: "The twelve agents everything else is built from. Raw schema-constrained JSON.",
+  blurb: "The twelve agents underneath",
   tag: "The original suite",
 
   mount(root, ctx) {

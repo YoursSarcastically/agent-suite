@@ -24,13 +24,13 @@ export default {
   id: "pile",
   name: "The Pile",
   icon: "pile",
-  blurb: "Everything you saved and never read. Now it answers questions.",
+  blurb: "Everything you saved, searchable",
   tag: "Agent loop over your own shelf",
 
   mount(root, ctx) {
     const paste = el("textarea.field", {
       rows: 4,
-      placeholder: "Paste an article — the whole thing. It gets read once and filed forever.",
+      placeholder: "Paste an article.",
     });
     const ask = el("input.field", {
       type: "text",
@@ -67,7 +67,7 @@ export default {
         el("label.label", { text: "Add to the pile" }),
         paste,
         el("div.row", { style: { marginTop: "14px" } }, saveBtn,
-          el("span.small.dim", { text: "or drop a .txt / .md file anywhere on this page" }))),
+          el("span.small.dim", { text: "or drop a file anywhere" }))),
       el("section.panel", {},
         el("label.label", { text: "Ask" }),
         ask,

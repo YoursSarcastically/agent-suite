@@ -19,11 +19,32 @@
  *   films   iTunes Search    plain search, filtered to feature films client-side
  *   shows   TVMaze           genres, summary, rating
  *   books   Open Library     subjects, author, year, ratings
+ *   films+  OMDb             enrichment only - rating, genre, plot for a known title
+ *
+ * OMDb is used for enrichment rather than discovery, and that split is forced
+ * by what it can actually do: its `s=` search matches title substrings only, so
+ * "horror comedy" returns films with those words in the name rather than films
+ * of that genre. Its `t=` lookup, on the other hand, returns an IMDb rating, a
+ * real genre list and a plot - exactly the material the ranking agent lacks
+ * when iTunes hands back a title and nothing else.
  *
  * Every request is recorded in `networkLog` so the UI can show exactly what left
  * the machine. The honest claim for this app is not "nothing leaves your tab" -
  * it is "your taste never leaves your tab; only the search words do."
  */
+
+/**
+ * OMDb key.
+ *
+ * This is a free-tier key in a public static site, so it is readable by anyone
+ * who opens the page - there is nowhere to hide a secret in a folder of files
+ * served straight from a CDN. Two things keep that from mattering much: the
+ * free tier is 1,000 requests a day and this only fires for the handful of
+ * films that reach the shortlist, and every lookup is cached locally so a
+ * repeated title costs nothing. If it is ever exhausted or revoked, enrichment
+ * degrades to nothing and the app keeps working on iTunes metadata alone.
+ */
+const OMDB_KEY = "15b3d9e0";
 
 /** Every outbound request this session, newest last. The UI renders it verbatim. */
 export const networkLog = [];
@@ -172,6 +193,66 @@ export async function searchBooks(term, { limit = 8, signal } = {}) {
     rating: b.ratings_average ? Number(b.ratings_average.toFixed(1)) : null,
     link: b.key ? `https://openlibrary.org${b.key}` : "",
   }));
+}
+
+/* ------------------------------------------------------------------ *
+ * enrichment - OMDb
+ * ------------------------------------------------------------------ */
+
+/** Lookups persist across sessions; the same films come back for similar moods. */
+const OMDB_CACHE = "agent-suite:omdb";
+
+const loadCache = () => {
+  try { return JSON.parse(localStorage.getItem(OMDB_CACHE) ?? "{}"); } catch { return {}; }
+};
+const saveCache = (cache) => {
+  try { localStorage.setItem(OMDB_CACHE, JSON.stringify(cache)); } catch { /* full or denied */ }
+};
+
+/**
+ * Add IMDb rating, genre and plot to films that already came back from iTunes.
+ *
+ * Failures are deliberately silent. Enrichment is an upgrade, not a dependency:
+ * a dead key or an exhausted quota should cost you the ratings, not the results.
+ */
+export async function enrichFilms(items, { signal, max = 8 } = {}) {
+  const cache = loadCache();
+  let hits = 0;
+  let dirty = false;
+
+  for (const item of items) {
+    if (item.kind !== "film" || hits >= max) continue;
+    const key = `${item.title}|${item.year}`;
+
+    let found = cache[key];
+    if (found === undefined) {
+      hits++;
+      const url =
+        `https://www.omdbapi.com/?t=${encodeURIComponent(item.title)}` +
+        `${item.year ? `&y=${item.year}` : ""}&apikey=${OMDB_KEY}`;
+      try {
+        const data = await getJson(url, `details for "${item.title}"`, signal);
+        found = data.Response === "True"
+          ? { genre: data.Genre, plot: data.Plot, rating: data.imdbRating, runtime: data.Runtime }
+          : null;
+      } catch (err) {
+        if (err.name === "AbortError") throw err;
+        record({ url: `details for "${item.title}"`, note: err.message, failed: true });
+        found = null;
+      }
+      cache[key] = found;
+      dirty = true;
+    }
+
+    if (!found) continue;
+    if (found.genre && found.genre !== "N/A") item.genre = found.genre;
+    if (found.plot && found.plot !== "N/A") item.blurb = found.plot;
+    if (found.rating && found.rating !== "N/A") item.rating = Number(found.rating);
+    if (found.runtime && found.runtime !== "N/A") item.runtime = found.runtime;
+  }
+
+  if (dirty) saveCache(cache);
+  return items;
 }
 
 /* ------------------------------------------------------------------ *
