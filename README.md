@@ -95,26 +95,33 @@ The golden set asks whether an agent classifies correctly; this asks whether the
 app is usable, which is a different question — an agent can be accurate and
 still make an app painful, because the app runs three of them while you wait.
 
-**Llama 3.2 3B — 8/9 checks passed, ~10 tok/s median, 134s for the whole suite:**
+Two 3B models, same machine, same code:
 
-| App | End to end | Slowest call |
+| | **Llama 3.2 3B** | Qwen2.5 3B |
 |---|---|---|
-| Journal | 18.0s | `journal-read` 9.5s |
-| The Pile | 25.0s | `shelf-read` 14.8s |
-| Braindump | 26.7s | `braindump` 19.3s |
-| Recommend Me | 64.0s | `pick` — truncated at 55.4s |
+| Checks passed | **9 / 9** | 8 / 9 |
+| Whole suite | **95s** | 113s |
+| Braindump | 30.4s | 31.9s |
+| Journal | **19.0s** | 25.5s |
+| The Pile | **25.3s** | 37.4s |
+| Recommend Me | 20.3s | **18.5s** |
+| Median tok/s | 9 | 9 |
+| Download | **2.21 GB** | 2.45 GB |
 
-That single failure was the most useful result in the suite, because it is the
-README's own lesson wearing a different hat. `picks` was an array with
-`maxItems: 4` — and **`maxItems` is an assertion the structural decoder ignores,
-exactly like `minimum` and `maximum`.** Under the grammar an array is a state
-machine that may always emit one more element, so nothing stopped the model
-writing reasons until `max_tokens` cut it off, and a truncated object under a
-grammar is the one thing that cannot be parsed.
+Llama 3.2 3B is the default on those numbers: a clean sweep, 19% faster, and
+240MB smaller. Qwen2.5 3B's one failure was semantic rather than mechanical — it
+offered a film to someone who asked for a book, which is the kind of mistake no
+schema can prevent.
 
-Arrays cannot be bounded by a schema the decoder only structurally implements.
-Fixed fields can: `pick_1/why_1/pick_2/why_2/pick_3/why_3` is bounded by
-construction, cannot run away, and takes the alignment problem with it.
+Qwen2.5 1.5B is kept as the small option and it is genuinely worse, in a way
+that shows up as product quality rather than as a failed assertion: asked for
+"something like Nope but funnier" it searches for `funnier` and `Nope`, where
+the 3B searches for `horror comedy` and `sci-fi comedy`. No amount of prompting
+closed that gap.
+
+**Earlier, before the ranking agent was rewritten**, Llama scored 8/9 and took
+134s — the extra 39 seconds were a single agent generating until `max_tokens`
+and then failing to parse:
 
 ### Qwen3 does not work here
 

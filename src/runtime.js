@@ -50,7 +50,7 @@ export const DEFAULT_MODEL = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 export const MODELS = [
   { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen2.5 1.5B", vram: "~1.6 GB" },
   { id: "Llama-3.2-3B-Instruct-q4f16_1-MLC", label: "Llama 3.2 3B", vram: "~2.2 GB" },
-  { id: "Qwen2.5-7B-Instruct-q4f16_1-MLC", label: "Qwen2.5 7B", vram: "~5.1 GB" },
+  { id: "Qwen2.5-3B-Instruct-q4f16_1-MLC", label: "Qwen2.5 3B", vram: "~2.5 GB" },
 ];
 
 let enginePromise = null;
