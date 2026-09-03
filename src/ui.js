@@ -20,6 +20,7 @@ import { icon } from "./icons.js";
 import {
   MODELS, DEFAULT_MODEL, checkSupport, describeDevice,
   getEngine, isLoaded, loadedModel, runAgent, interrupt, unload,
+  storageReport, clearModelCache,
 } from "./runtime.js";
 import { read, write } from "./store.js";
 
@@ -48,6 +49,7 @@ const support = checkSupport();
 const seenBefore = () => read("engine:loaded", []).includes(DEFAULT_MODEL);
 
 let loading = false;
+let outOfSpace = false;
 let progressText = "";
 let progressPct = 0;
 
@@ -73,7 +75,14 @@ async function load(modelId) {
     write("engine:loaded", [...new Set([...read("engine:loaded", []), modelId])]);
     toast(`${labelFor(modelId)} is running on ${device.label || "your GPU"}.`);
   } catch (err) {
-    progressText = `Could not load: ${err.message}`;
+    // The cache-full failure arrives as an opaque internal error, so it is
+    // named here rather than passed through.
+    const room = await storageReport();
+    progressText = /cache/i.test(err.message) || room.free < 200e6
+      ? `Out of browser storage — ${(room.usage / 1024 ** 3).toFixed(1)} GB of ` +
+        `${(room.quota / 1024 ** 3).toFixed(1)} GB is used by models already downloaded.`
+      : `Could not load: ${err.message}`;
+    outOfSpace = /storage/i.test(progressText);
   } finally {
     loading = false;
     render();
@@ -254,7 +263,22 @@ function gate() {
       el("span.n", { text: n }), el("span.k", { text: k })))),
 
     !loading && progressText.startsWith("Could not load") &&
-      el("p.small.dim", { style: { marginTop: "18px" }, text: progressText })
+      el("p.small.dim", { style: { marginTop: "18px" }, text: progressText }),
+
+    // WebLLM keeps every model it has ever downloaded. Switching a few times
+    // fills the quota, and from there nothing loads until something is dropped.
+    !loading && outOfSpace && el("div", { style: { marginTop: "18px" } },
+      el("p.small.dim", { text: progressText }),
+      el("button.btn.btn-sm", {
+        style: { marginTop: "12px" },
+        onclick: async () => {
+          const n = await clearModelCache();
+          outOfSpace = false;
+          progressText = "";
+          toast(n ? "Cleared the downloaded models. Try again." : "Nothing cached to clear.");
+          render();
+        },
+      }, "Free up space"))
   );
 }
 

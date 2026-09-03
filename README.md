@@ -123,6 +123,28 @@ closed that gap.
 134s — the extra 39 seconds were a single agent generating until `max_tokens`
 and then failing to parse:
 
+### What is actually runnable
+
+A model needs three things to run here, and the third is the one that catches
+people out: MLC-converted weights, a matching **WebGPU wasm binary**, and an
+entry in WebLLM's prebuilt config. Weights alone are not enough.
+
+| | MLC weights | WebGPU wasm | Runs in WebLLM |
+|---|---|---|---|
+| Gemma 4 E4B | ✗ | ✗ | no |
+| Gemma 3 4B | ✓ | ✗ | **no** |
+| Gemma 3 1B | ✓ | ✓ | yes — 0.69 GB |
+| Gemma 2 2B | ✓ | ✓ | yes — 1.85 GB |
+| Llama 3.2 3B | ✓ | ✓ | yes — 2.21 GB |
+
+Gemma 4 (July 2026) is the obvious thing to want here — Per-Layer Embeddings
+are designed for exactly this, 4.5B effective parameters from 8B total — and it
+has not been converted to MLC at all. Gemma 3 4B *has* been converted and still
+will not run: `mlc-ai/gemma-3-4b-it-q4f16_1-MLC` exists, but no
+`gemma-3-4b-*-webgpu.wasm` does, so there is nothing for the browser to load.
+Compiling one is possible through MLC-LLM and is a real piece of work, not a
+config change.
+
 ### Qwen3 does not work here
 
 Reasoning models and grammar-constrained decoding do not compose, and the

@@ -53,6 +53,34 @@ export const MODELS = [
   { id: "Qwen2.5-3B-Instruct-q4f16_1-MLC", label: "Qwen2.5 3B", vram: "~2.5 GB" },
 ];
 
+/**
+ * How much room the browser will actually give this origin.
+ *
+ * WebLLM caches weights and never evicts an old model, so trying four of them
+ * fills the quota and every subsequent load dies on
+ * `Failed to execute 'add' on 'Cache'` - which says nothing about the real
+ * cause. Checking first turns an opaque stall into a sentence and a button.
+ */
+export async function storageReport(neededBytes = 0) {
+  try {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    return { usage, quota, free: Math.max(0, quota - usage), enough: quota - usage >= neededBytes };
+  } catch {
+    return { usage: 0, quota: 0, free: Infinity, enough: true };
+  }
+}
+
+/** Drop every cached model. The only way back from a full quota. */
+export async function clearModelCache() {
+  let removed = 0;
+  try {
+    for (const name of await caches.keys()) {
+      if (name.startsWith("webllm")) { await caches.delete(name); removed++; }
+    }
+  } catch { /* storage denied */ }
+  return removed;
+}
+
 let enginePromise = null;
 let activeModel = null;
 
