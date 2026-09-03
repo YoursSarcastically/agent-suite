@@ -55,10 +55,23 @@ const CHECKS = {
       .filter(([k, min]) => !(got[k] >= min))
       .map(([k, min]) => `${k}: expected >= ${min}, got ${got[k]}`),
 
+  // `redact` used to emit findings as an array of {type, value} objects. That
+  // schema hung the decoder and was flattened into two parallel arrays, but this
+  // checker was never updated - it read `got.findings`, which has not existed
+  // since, so it could only ever fail. No golden case used it, which is exactly
+  // why it survived. It now reads the shape the agent actually emits.
   expect_finding_types: (got, types) => {
-    const found = new Set((got.findings ?? []).map((f) => f.type));
+    const found = new Set(got.finding_types ?? []);
     return types.filter((t) => !found.has(t)).map((t) => `missing finding type "${t}"`);
   },
+
+  // Parallel arrays are index-aligned by convention only, so the suite asserts
+  // on the convention. runtime.validate() reports the breakage; this turns it
+  // into a failing case instead of a console note.
+  expect_aligned: (got, groups, result) =>
+    (result?.issues ?? [])
+      .filter((i) => i.kind === "misaligned")
+      .map((i) => `${i.fields.join(" / ")} out of step (${i.detail})`),
 };
 
 $("go").addEventListener("click", async () => {
@@ -81,6 +94,7 @@ $("go").addEventListener("click", async () => {
   let refusalPassed = 0;
   let refusalTotal = 0;
   let repairs = 0;
+  let misaligned = 0;
   const times = [];
 
   for (const [i, c] of cases.entries()) {
@@ -97,8 +111,13 @@ $("go").addEventListener("click", async () => {
       repairs += result.repairs.length;
 
       for (const [key, checker] of Object.entries(CHECKS)) {
-        if (c[key]) failures.push(...checker(result.data, c[key]));
+        if (c[key]) failures.push(...checker(result.data, c[key], result));
       }
+
+      // Every case is implicitly an alignment case. A run that returns three
+      // finding types and one finding value passed its assertions and still
+      // produced an object no consumer can read.
+      misaligned += result.issues.filter((i) => i.kind === "misaligned").length;
     } catch (err) {
       failures = [`threw: ${err.message}`];
     }
@@ -123,11 +142,13 @@ $("go").addEventListener("click", async () => {
     $("s-total").textContent = cases.length;
     $("s-refusal").textContent = `${refusalPassed}/${refusalTotal}`;
     $("s-repairs").textContent = repairs;
+    $("s-misaligned").textContent = misaligned;
     $("s-time").textContent = times.length ? `${(median(times) / 1000).toFixed(1)}s` : "—";
   }
 
   $("status").textContent =
-    `Done — ${passed}/${cases.length} passed, refusals ${refusalPassed}/${refusalTotal}.`;
+    `Done — ${passed}/${cases.length} passed, refusals ${refusalPassed}/${refusalTotal}, ` +
+    `${misaligned} misaligned output${misaligned === 1 ? "" : "s"}.`;
   $("go").disabled = false;
   $("model").disabled = false;
 });

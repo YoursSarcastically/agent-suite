@@ -1,24 +1,37 @@
 # Agent Suite
 
-**Twelve AI agents that run entirely in your browser.** No API key, no server, no data leaving the tab.
+**Six small apps that run entirely in your browser.** No API key, no account, no server, no bill — and they keep working with the wifi off.
 
-### ▶ [Try it live](https://yourssarcastically.github.io/agent-suite/) · [Run the evals](https://yourssarcastically.github.io/agent-suite/evals/run.html)
+### ▶ [Open it](https://yourssarcastically.github.io/agent-suite/) · [Run the evals](https://yourssarcastically.github.io/agent-suite/evals/run.html)
 
 Needs a WebGPU browser (Chrome/Edge 113+, Safari 18+). First load downloads ~1.1 GB of weights into your browser cache; after that it is instant and works offline.
 
 ---
 
-## Why in-browser
+## The apps
 
-Every "AI agent" demo has the same shape: a thin UI in front of somebody's API. That makes three problems invisible.
+| | | |
+|---|---|---|
+| 🧠 **Braindump** | Type the way your head actually works. Get a real list back. | One agent extracts, another commits to what you do next |
+| 🌡 **Cooldown** | Before you hit send at 1am — or after they sent you two words. | Writes, grades itself, rewrites, up to three rounds |
+| 🚨 **Is This a Scam?** | Paste the text about the parcel or the refund. | Model judgement plus deterministic link inspection |
+| 📚 **The Pile** | Everything you saved and never read, now it answers questions. | Agent loop over your own shelf |
+| 📓 **Journal** | Write freely. It files the mood, the people, the promises. | May decline to find a pattern, and often should |
+| 🎬 **Recommend Me** | Describe a mood, get films, shows and books. | The only app that uses the network — and it says so |
 
-**Cost per call is invisible.** When inference is free at the margin, you stop asking whether an agent should run on every keystroke. Running on-device makes the budget physical — it is the user's battery and their GPU.
+Plus **[Under the hood](https://yourssarcastically.github.io/agent-suite/#workbench)** — the twelve raw agents everything is assembled from, with the schema-constrained JSON on screen.
 
-**Latency is somebody else's problem.** An API call has roughly constant latency. On-device, throughput depends entirely on the machine, and the same agent is pleasant at 40 tok/s and unusable at 4. You only learn this by shipping it onto hardware you do not control.
+---
 
-**The data question never gets asked.** Support inboxes are full of names, addresses, and card numbers. "It never leaves the device" is a different product from "we don't train on your data", and only one of them survives a security review.
+## Why the browser
 
-This suite makes all three unavoidable, which is the point.
+Every "AI agent" demo has the same shape: a thin UI in front of somebody's API. That makes three problems invisible, and hides one capability.
+
+**Cost per call is invisible.** When inference is free at the margin, you stop asking whether an agent should run. That sounds like a downside until you notice what it permits: Cooldown rewrites a message, grades the rewrite against the original, and revises — three times, on every click. Self-critique triples the token cost of a feature, which is why almost no metered product ships it. Here it costs the same as not doing it.
+
+**Latency is somebody else's problem.** An API call has roughly constant latency. On-device, throughput depends entirely on the machine, and the same agent is pleasant at 40 tok/s and unusable at 4. You only learn this by shipping onto hardware you do not control, so the suite names the GPU it found and reports tokens per second on every run.
+
+**The data question never gets asked.** These are the six things you would least want to paste anywhere: your todo list, your journal, the message you drafted about your boss, the text your mum forwarded, everything you saved to read later. "It never leaves the device" is a different product from "we don't train on your data", and only one of them survives a security review.
 
 ---
 
@@ -26,25 +39,23 @@ This suite makes all three unavoidable, which is the point.
 
 WebLLM's OpenAI-style function calling is still marked work-in-progress upstream, and small models are poor at emitting well-formed tool calls from a prose instruction. What WebLLM *does* do well is **grammar-constrained JSON generation** — the schema is enforced during decoding in the WASM layer, so malformed JSON is not merely unlikely, it is unreachable.
 
-So nothing here "calls a tool". Every agent declares a JSON Schema, decoding is constrained to it, and dispatch becomes a pure function of a guaranteed-valid object:
+So nothing here "calls a tool". Every agent declares a JSON Schema, decoding is constrained to it, and dispatch becomes a pure function of a guaranteed-valid object.
+
+**That is also how the agent loop works.** When an app plans its next step, `next_tool` is an enum of the tools that actually exist:
 
 ```js
-{
-  id: "triage",
-  system: "You triage inbound support messages…",
-  schema: {
-    type: "object",
-    properties: {
-      priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
-      confidence: { type: "number", minimum: 0, maximum: 1 },
-    },
-    required: ["priority", "confidence"],
+schema: {
+  properties: {
+    next_tool: { type: "string", enum: [...toolNames, "finish"] },
+    argument:  { type: "string" },
+    reason:    { type: "string" },
   },
-  buildPrompt: (input) => `Triage this message:\n\n${input}`,
 }
 ```
 
-Adding a thirteenth agent means adding one object to an array. There is no runtime to modify — all the variability lives in the schema.
+The model cannot hallucinate a tool, misspell one, or wrap it in prose, because none of those states are reachable under the grammar. Tool dispatch stops being parsing and becomes a switch statement.
+
+The argument is a single string, deliberately — structured argument objects are exactly the nested schemas that hang the decoder, which is the next section.
 
 **Enums beat free text at 1.5B.** A small model asked for a "priority" will cheerfully invent `"medium-high"`. Constrained decoding turns the enum from a hopeful instruction into a hard guarantee.
 
@@ -54,43 +65,43 @@ Adding a thirteenth agent means adding one object to an array. There is no runti
 
 **Constrained decoding enforces shape, not semantics.** This one cost me an hour. The grammar guarantees `confidence` is a number and `priority` is one of four strings — and then happily emits `confidence: 9` for a field documented as 0–1. JSON Schema's `minimum`/`maximum` are *assertions*; the decoder implements the structural subset only.
 
-The fix is a normalization pass that clamps numerics to their declared range **and reports every repair** rather than applying it silently. A model that constantly needs clamping is telling you the prompt is wrong, and swallowing that signal hides it. The UI shows a ⚠ when a value was clamped.
-
-**Refusal is the hard part, and it cuts both ways.** The golden set tracks refusal cases separately from everything else, because a suite that is 90% green while every refusal case fails describes an agent that is confidently wrong — worse than one that is uncertainly right.
-
-But tuning *for* refusal produces the opposite failure. `draft-reply` fails a case where the context genuinely does support an answer and it refuses anyway. Over-refusal is a real product cost: an agent that abstains too often is one users stop consulting. Both directions are in the suite deliberately.
+The fix is a normalization pass that clamps numerics to their declared range **and reports every repair** rather than applying it silently. A model that constantly needs clamping is telling you the prompt is wrong, and swallowing that signal hides it.
 
 **Nested object schemas hang the decoder outright.** Not "are slower" — hang. The two agents that originally emitted `array<object>` (`redact`, `actions`) never returned; an eval run stalled indefinitely on the first one while flat-schema agents were finishing in ~4s. The engine serializes requests, so one stuck generation blocks everything behind it.
 
-Flattening `{type, value}[]` into two index-aligned arrays fixed it — the same agent completes in 9.4s. **But the fix is not free, and pretending otherwise would be the wrong lesson.** Parallel arrays have no structural guarantee they stay the same length, and the very first run after the change proved it:
+Flattening `{type, value}[]` into two index-aligned arrays fixed it — the same agent completes in 9.4s. **But the fix is not free.** Parallel arrays have no structural guarantee they stay the same length, and the very first run after the change proved it:
 
 ```json
 { "finding_types":  ["phone", "email"],
   "finding_values": ["marcus.webb@example.com"] }
 ```
 
-Two types, one value. A nested schema would have made that state unrepresentable. So the real tradeoff is: *nested schemas are correct-by-construction but do not generate; flat schemas generate but push the correctness burden into validation.* At this model size only one of those options actually runs, so the burden moves to validation — but it does not disappear, and a consumer of these agents has to handle the misaligned case.
+Two types, one value. A nested schema would have made that state unrepresentable. So the real tradeoff is: *nested schemas are correct-by-construction but do not generate; flat schemas generate but push the correctness burden into validation.*
+
+**And then I did not actually do the validation.** The paragraph above shipped in this README describing a failure mode, and the code checked ranges and nothing else — no alignment check anywhere, for months. Meanwhile the eval suite carried `expect_finding_types`, a checker still reading `got.findings`, the nested shape deleted when `redact` was flattened. It could only ever fail. No golden case used it, which is exactly why it survived.
+
+Both are fixed now. Agents declare their invariants (`aligned`, `derived`), `runtime.validate()` enforces them after decoding, the apps surface breakage instead of silently dropping a row, and misaligned outputs are a scoreboard number in the eval run. The lesson is not "add validation" — it is that a README describing a bug is not the same as a test catching it, and prose is much better at hiding the gap.
+
+**Refusal is the hard part, and it cuts both ways.** The golden set tracks refusal cases separately, because a suite that is 90% green while every refusal case fails describes an agent that is confidently wrong — worse than one that is uncertainly right. But tuning *for* refusal produces the opposite failure: an agent that abstains too often is one users stop consulting. Both directions are in the suite deliberately.
+
+This matters most in Journal, which can return `found: false` when asked for a pattern. A fabricated insight about a support ticket is an annoyance; a fabricated insight about someone's own life is a small harm, so declining is a first-class outcome rather than a fallback.
+
+**Small models cannot recall, so never ask them to.** Recommend Me is built entirely around this. Ask a 1.5B model to name films and it invents them — right shape, right era, plausible director, does not exist. So the model never names a title. It turns a mood into search phrases (rewriting, which it is good at), three real catalogues return real titles, and the model ranks and explains what came back (reading, also good at). Everything on screen came from a database, not from the weights.
 
 ---
 
-## The twelve
+## Layout
 
-| Agent | Does | Notable field |
-|---|---|---|
-| 📥 Triage | Category, priority, owning team | `confidence` drives auto-route vs. queue |
-| 🔍 Extract | Entities out of unstructured text | Empty arrays when nothing is present |
-| 📝 Summarize | Thread → points, decisions, open questions | Separates decided from undecided |
-| ✍ Draft Reply | Grounded reply, or an explicit refusal | `grounded: false` is a success |
-| 🎭 Tone Shift | Rewrite to a target tone | `facts_preserved` guards meaning drift |
-| 🌡 Sentiment & Risk | Emotional read + churn risk | Frustration ≠ intent to leave |
-| 🔀 Intent Router | Message → downstream workflow | Falls back to `human_review` under 0.6 |
-| 🔐 Redact | Finds personal data, emits safe text | Typed findings, not a regex sweep |
-| ⚖ QA Scorer | Grades a reply against the question | Catches the polite non-answer |
-| 🕳 Knowledge Gap | Can the KB answer at all? | Names the article that should exist |
-| 🌐 Translate | Translate, preserve register | Leaves product names alone |
-| ✅ Action Items | Commitments with owners | `unassigned` beats a guessed owner |
-
----
+```
+src/runtime.js      engine, constrained generation, normalization, validation
+src/orchestrator.js the agent loop; next_tool as an enum, plus produce→critique→revise
+src/agents.js       the original twelve declarative agent records
+src/app-agents.js   agents specific to the six apps
+src/catalog.js      the only file that touches the network, and it logs every request
+src/apps/*.js       one file per app
+evals/goldens.json  golden set, refusal cases tagged
+evals/run.js        assertion-based runner
+```
 
 ## Evals
 
@@ -100,9 +111,7 @@ Two types, one value. A nested schema would have made that state unrepresentable
 open https://yourssarcastically.github.io/agent-suite/evals/run.html
 ```
 
-Results are reported honestly, including the failures — see the run page for the current numbers on your own hardware. Scores differ by machine and model, which is itself the point: an eval that only ran on my laptop tells you nothing about yours.
-
----
+Results are reported honestly, including the failures. Scores differ by machine and model, which is itself the point: an eval that only ran on my laptop tells you nothing about yours.
 
 ## Running locally
 
@@ -112,21 +121,15 @@ No build step, no dependencies, no bundler. It is ES modules and a static server
 python3 serve.py
 ```
 
-Then open `http://localhost:8777`.
-
-Deployment is the same story — the whole thing is static files, which is why it hosts on GitHub Pages with a `.nojekyll` and nothing else.
+Then open `http://localhost:8777`. Deployment is the same story — static files on GitHub Pages with a `.nojekyll` and nothing else.
 
 ---
 
-## Layout
+## A note on the one network call
 
-```
-src/runtime.js    engine, constrained generation, numeric normalization
-src/agents.js     twelve declarative agent records
-src/ui.js         workbench
-evals/goldens.json  golden set, refusal cases tagged
-evals/run.js      assertion-based runner
-```
+Five of the six apps make no requests at all once the weights are cached. **Recommend Me does**, because it looks up real titles in [iTunes Search](https://performance-partners.apple.com/search-api), [TVMaze](https://www.tvmaze.com/api) and [Open Library](https://openlibrary.org/developers/api) — none of which need an API key, which is why this is still a static site with no backend and no secret to leak.
+
+The app shows every URL it requested, in the UI, as it happens. The honest claim there is narrower than for the rest: your taste never leaves the tab, only the search words do.
 
 ---
 

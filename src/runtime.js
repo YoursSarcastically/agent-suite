@@ -11,9 +11,9 @@
  *
  * So tools are not "called". Every agent declares a JSON Schema for its output,
  * and the runtime constrains decoding to that schema. Tool dispatch becomes a
- * pure function of a guaranteed-valid object. That trades a little expressiveness
- * for the thing that actually matters at 1.5B: never having to parse a maybe-JSON
- * blob out of a chatty response.
+ * pure function of a guaranteed-valid object - which is what makes the desk in
+ * pipeline.js possible at all: one station can feed the next only because the
+ * thing coming out of the first is guaranteed to have the shape the second reads.
  */
 
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
@@ -21,7 +21,7 @@ import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 /** Small enough to download once and run on an integrated GPU. */
 export const DEFAULT_MODEL = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
 
-/** Larger fallback for machines that can afford it. */
+/** Larger fallbacks for machines that can afford them. */
 export const MODELS = [
   { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", label: "Qwen2.5 1.5B", vram: "~1.1 GB" },
   { id: "Llama-3.2-3B-Instruct-q4f16_1-MLC", label: "Llama 3.2 3B", vram: "~2.3 GB" },
@@ -30,6 +30,10 @@ export const MODELS = [
 
 let enginePromise = null;
 let activeModel = null;
+
+/* ------------------------------------------------------------------ *
+ * device
+ * ------------------------------------------------------------------ */
 
 /**
  * WebGPU is the hard requirement. Fail loudly and early rather than throwing
@@ -45,6 +49,24 @@ export function checkSupport() {
     };
   }
   return { ok: true };
+}
+
+/**
+ * Name the hardware. The whole premise is that throughput depends on a machine
+ * nobody controls, so "it runs at 40 tok/s" is meaningless without saying on what.
+ * `adapter.info` is the current spelling, `requestAdapterInfo()` the older one,
+ * and some browsers still ship neither.
+ */
+export async function describeDevice() {
+  try {
+    const adapter = await navigator.gpu?.requestAdapter();
+    if (!adapter) return { label: "Unknown GPU" };
+    const info = adapter.info ?? (await adapter.requestAdapterInfo?.()) ?? {};
+    const parts = [info.vendor, info.architecture].filter(Boolean);
+    return { label: info.description || parts.join(" ") || "your GPU" };
+  } catch {
+    return { label: "your GPU" };
+  }
 }
 
 /**
@@ -64,14 +86,36 @@ export async function getEngine(modelId = DEFAULT_MODEL, onProgress = () => {}) 
   return enginePromise;
 }
 
+export const isLoaded = () => Boolean(enginePromise);
+export const loadedModel = () => activeModel;
+
+/**
+ * Stop the current generation without tearing the engine down.
+ *
+ * This is not a nicety. The engine serialises requests, so one long generation
+ * blocks everything queued behind it - on a slow GPU a 7B run can leave the page
+ * looking hung with no way out but a reload.
+ */
+export async function interrupt() {
+  if (!enginePromise) return;
+  try {
+    (await enginePromise).interruptGenerate();
+  } catch {
+    /* nothing in flight */
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * generation
+ * ------------------------------------------------------------------ */
+
 /**
  * Run one agent.
  *
- * Returns the parsed object plus timing. Latency is surfaced per call because
- * on-device inference has a very different cost curve from an API - the first
- * token is slow, and throughput depends entirely on the user's hardware. An
- * agent that is pleasant at 40 tok/s is unusable at 4, and you only find that
- * out by measuring on real machines.
+ * Latency is surfaced per call because on-device inference has a very different
+ * cost curve from an API - the first token is slow, and throughput depends
+ * entirely on the user's hardware. An agent that is pleasant at 40 tok/s is
+ * unusable at 4, and you only find that out by measuring on real machines.
  */
 export async function runAgent(agent, input, opts = {}) {
   const {
@@ -79,36 +123,49 @@ export async function runAgent(agent, input, opts = {}) {
     onProgress = () => {},
     onToken = null,
     signal = null,
+    seed,
   } = opts;
 
   const engine = await getEngine(modelId, onProgress);
   const started = performance.now();
 
-  const messages = [
-    { role: "system", content: agent.system },
-    { role: "user", content: agent.buildPrompt(input) },
-  ];
-
   const request = {
-    messages,
+    messages: [
+      { role: "system", content: agent.system },
+      { role: "user", content: agent.buildPrompt(input) },
+    ],
     temperature: agent.temperature ?? 0,
     max_tokens: agent.maxTokens ?? 512,
     // The schema is enforced during decoding, not validated afterwards.
     response_format: { type: "json_object", schema: JSON.stringify(agent.schema) },
   };
+  if (typeof seed === "number") request.seed = seed;
 
   let raw = "";
+  let completionTokens = 0;
+
   if (onToken) {
-    const stream = await engine.chat.completions.create({ ...request, stream: true });
+    const stream = await engine.chat.completions.create({
+      ...request,
+      stream: true,
+      stream_options: { include_usage: true },
+    });
     for await (const chunk of stream) {
-      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      if (signal?.aborted) {
+        await interrupt();
+        throw new DOMException("Aborted", "AbortError");
+      }
       const delta = chunk.choices?.[0]?.delta?.content ?? "";
-      raw += delta;
-      if (delta) onToken(delta);
+      if (delta) {
+        raw += delta;
+        onToken(delta, raw);
+      }
+      if (chunk.usage?.completion_tokens) completionTokens = chunk.usage.completion_tokens;
     }
   } else {
     const reply = await engine.chat.completions.create(request);
     raw = reply.choices?.[0]?.message?.content ?? "";
+    completionTokens = reply.usage?.completion_tokens ?? 0;
   }
 
   const elapsedMs = performance.now() - started;
@@ -118,7 +175,7 @@ export async function runAgent(agent, input, opts = {}) {
   let data;
   try {
     data = JSON.parse(raw);
-  } catch (err) {
+  } catch {
     throw new Error(
       `Model returned unparseable output - likely truncated at max_tokens=${
         agent.maxTokens ?? 512
@@ -127,16 +184,28 @@ export async function runAgent(agent, input, opts = {}) {
   }
 
   const { value, repairs } = normalize(data, agent.schema);
+  // Report the breakage first, then repair it. Reversing these would hide the
+  // signal that the prompt is producing malformed tables in the first place.
+  const issues = validate(value, agent);
+  const realigned = realign(value, agent);
 
   return {
     data: value,
     repairs,
+    realigned,
+    issues,
     raw,
     elapsedMs,
-    tokensPerSecond: estimateTps(raw, elapsedMs),
+    // Real counts when the engine reports them; ~4 chars/token when it does not.
+    completionTokens: completionTokens || Math.round(raw.length / 4),
+    tokensPerSecond: tps(completionTokens || raw.length / 4, elapsedMs),
     model: modelId,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * validation
+ * ------------------------------------------------------------------ */
 
 /**
  * Constrained decoding enforces *shape*, not *semantics*.
@@ -154,18 +223,18 @@ export async function runAgent(agent, input, opts = {}) {
 export function normalize(obj, schema) {
   const repairs = [];
 
-  const walk = (node, spec) => {
+  const walk = (node, spec, path = "") => {
     if (!spec || node == null) return node;
 
     if (spec.type === "object" && spec.properties) {
       for (const [key, sub] of Object.entries(spec.properties)) {
-        if (key in node) node[key] = walk(node[key], sub);
+        if (key in node) node[key] = walk(node[key], sub, path ? `${path}.${key}` : key);
       }
       return node;
     }
 
     if (spec.type === "array" && Array.isArray(node)) {
-      return node.map((item) => walk(item, spec.items));
+      return node.map((item, i) => walk(item, spec.items, `${path}[${i}]`));
     }
 
     if (spec.type === "number" || spec.type === "integer") {
@@ -175,7 +244,9 @@ export function normalize(obj, schema) {
       if (typeof spec.minimum === "number") n = Math.max(spec.minimum, n);
       if (typeof spec.maximum === "number") n = Math.min(spec.maximum, n);
       if (spec.type === "integer") n = Math.round(n);
-      if (n !== before) repairs.push({ from: before, to: n, range: [spec.minimum, spec.maximum] });
+      if (n !== before) {
+        repairs.push({ field: path, from: before, to: n, range: [spec.minimum, spec.maximum] });
+      }
       return n;
     }
 
@@ -185,11 +256,106 @@ export function normalize(obj, schema) {
   return { value: walk(obj, schema), repairs };
 }
 
-function estimateTps(text, ms) {
-  if (!ms) return 0;
-  // ~4 chars per token is close enough for a UI readout.
-  return Math.round((text.length / 4 / ms) * 1000);
+/**
+ * The checks a JSON Schema cannot express.
+ *
+ * Nested object schemas hang the constrained decoder at this model size, so the
+ * two agents that wanted `{type, value}[]` emit index-aligned parallel arrays
+ * instead. The README is honest about that trade and says the correctness burden
+ * moves into validation - and then nothing actually validated it. This is the
+ * missing half. It is not hypothetical: the first run after flattening `redact`
+ * produced two finding types and one finding value.
+ *
+ * `derived` covers the same class of problem one level up. A field documented as
+ * "how many of these are unassigned" is a claim about another field, and a
+ * grammar has no way to hold a model to it.
+ */
+export function validate(data, agent) {
+  const issues = [];
+
+  for (const group of agent.aligned ?? []) {
+    const lengths = group.map((key) => (Array.isArray(data[key]) ? data[key].length : null));
+    if (lengths.some((n) => n === null)) continue;
+    if (new Set(lengths).size > 1) {
+      issues.push({
+        kind: "misaligned",
+        fields: group,
+        detail: group.map((key, i) => `${key}: ${lengths[i]}`).join(" · "),
+        message:
+          "These arrays are index-aligned by convention only. A nested schema would have " +
+          "made this state unrepresentable — a flat one has to catch it here.",
+      });
+    }
+  }
+
+  for (const [countField, spec] of Object.entries(agent.derived ?? {})) {
+    const source = data[spec.from];
+    if (!Array.isArray(source) || typeof data[countField] !== "number") continue;
+    const actual = source.filter((v) => v === spec.equals).length;
+    if (actual !== data[countField]) {
+      issues.push({
+        kind: "inconsistent",
+        fields: [countField, spec.from],
+        detail: `said ${data[countField]} · actually ${actual}`,
+        message: "The model reported a count that disagrees with the array it counts.",
+      });
+    }
+  }
+
+  return issues;
 }
+
+/**
+ * Repair misaligned parallel arrays instead of merely reporting them.
+ *
+ * Detecting the breakage was not enough, and the first real run said so. Asked
+ * for five tasks the model returned five of everything except `owners`, where
+ * it collapsed five identical "me" values into one - deduplicating a column of
+ * a table it did not know was a table. Truncating every array to the shortest
+ * one turned five real tasks into one, which is a far worse outcome than the
+ * misalignment itself.
+ *
+ * So an agent names a `spine` - the array that defines the true row count - and
+ * a `fill` value per column. Short columns are padded, long ones trimmed, and
+ * every repair is reported. The rows survive; the guarantee a nested schema
+ * would have given for free is reconstructed here, visibly, at the cost of
+ * having to declare a default for every field.
+ */
+export function realign(data, agent) {
+  const repairs = [];
+  if (!agent.spine) return repairs;
+
+  for (const group of agent.aligned ?? []) {
+    if (!group.includes(agent.spine)) continue;
+    const rows = Array.isArray(data[agent.spine]) ? data[agent.spine].length : 0;
+    if (!rows) continue;
+
+    for (const key of group) {
+      if (key === agent.spine || !Array.isArray(data[key])) continue;
+      const had = data[key].length;
+      if (had === rows) continue;
+
+      if (had < rows) {
+        const filler = agent.fill?.[key] ?? "";
+        // Repeat the single value when the model gave exactly one - it almost
+        // always means "the same for every row", which is why it deduplicated.
+        const pad = had === 1 ? data[key][0] : filler;
+        data[key] = [...data[key], ...Array(rows - had).fill(pad)];
+      } else {
+        data[key] = data[key].slice(0, rows);
+      }
+      repairs.push({ field: key, from: had, to: rows });
+    }
+  }
+
+  return repairs;
+}
+
+/* ------------------------------------------------------------------ *
+ * helpers
+ * ------------------------------------------------------------------ */
+
+const tps = (tokens, ms) => (ms ? Math.round((tokens / ms) * 1000) : 0);
 
 /** Free GPU memory when switching models. */
 export async function unload() {

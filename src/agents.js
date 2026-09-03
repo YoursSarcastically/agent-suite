@@ -222,6 +222,12 @@ export const AGENTS = [
       },
       required: ["redacted_text", "finding_types", "finding_values", "safe_to_share"],
     },
+    // The invariant the schema cannot state. Flattening bought a decoder that
+    // terminates and cost the guarantee that these two arrays describe the same
+    // findings; runtime.validate() is where that guarantee now lives.
+    aligned: [["finding_types", "finding_values"]],
+    spine: "finding_types",
+    fill: { finding_values: "(not reported)" },
     buildPrompt: (input) => `Redact all personal data:\n\n${input}`,
     sample:
       "Hi, it's Marcus Webb - reach me on +1 415 555 0142 or marcus.webb@example.com. " +
@@ -321,6 +327,12 @@ export const AGENTS = [
       },
       required: ["tasks", "owners", "due_dates", "unassigned_count"],
     },
+    aligned: [["tasks", "owners", "due_dates"]],
+    spine: "tasks",
+    fill: { owners: "unassigned", due_dates: "unspecified" },
+    // `unassigned_count` is an assertion about `owners`. A grammar cannot hold a
+    // model to that, so it is checked after decoding, like the numeric ranges.
+    derived: { unassigned_count: { from: "owners", equals: "unassigned" } },
     buildPrompt: (input) => `Extract action items:\n\n${input}`,
     sample:
       "Ben will ship the pagination workaround by Friday. The proper fix lands next sprint. " +
