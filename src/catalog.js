@@ -28,18 +28,78 @@
 /** Every outbound request this session, newest last. The UI renders it verbatim. */
 export const networkLog = [];
 
-const record = (url, note) => {
-  networkLog.push({ url, note, at: Date.now() });
-  return url;
+const record = (entry) => {
+  networkLog.push({ at: Date.now(), ...entry });
+  return entry.url;
 };
 
 export const clearNetworkLog = () => networkLog.splice(0, networkLog.length);
 
-async function getJson(url, note, signal) {
-  const res = await fetch(record(url, note), { signal });
-  if (!res.ok) throw new Error(`${new URL(url).hostname} returned ${res.status}`);
-  return res.json();
+/**
+ * These are free, unauthenticated endpoints and they rate-limit accordingly -
+ * iTunes at roughly twenty calls a minute, TVMaze at twenty per ten seconds. A
+ * mood that fans out to three queries across two catalogues trips both, and the
+ * first version fired them as fast as the loop could issue them.
+ *
+ * So requests are queued behind a minimum gap. This is slower on paper and
+ * faster in practice, because a 429 costs a whole round trip and returns nothing.
+ */
+const MIN_GAP_MS = 320;
+let lastRequestAt = 0;
+
+async function throttle() {
+  const wait = MIN_GAP_MS - (Date.now() - lastRequestAt);
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastRequestAt = Date.now();
 }
+
+const sleep = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(t); reject(new DOMException("Aborted", "AbortError")); },
+      { once: true });
+  });
+
+/**
+ * One request, with a single retry.
+ *
+ * Rate limits are transient by definition, so the first failure is worth one
+ * more attempt after a pause. A second failure is real and gets reported with
+ * the actual status - the previous version logged "(film search failed)" with
+ * the message thrown away, which made a rate limit indistinguishable from a
+ * bug for as long as it took to notice.
+ */
+async function getJson(url, note, signal) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await throttle();
+    let res;
+    try {
+      res = await fetch(url, { signal });
+    } catch (err) {
+      if (err.name === "AbortError") throw err;
+      if (attempt === 2) throw new Error(`${hostOf(url)} could not be reached`);
+      await sleep(600, signal);
+      continue;
+    }
+
+    if (res.ok) {
+      record({ url, note });
+      return res.json();
+    }
+
+    const rateLimited = res.status === 429 || res.status === 403;
+    if (attempt === 2 || !rateLimited) {
+      throw new Error(
+        rateLimited
+          ? `${hostOf(url)} is rate-limiting — it allows only a few searches a minute`
+          : `${hostOf(url)} returned ${res.status}`
+      );
+    }
+    await sleep(1200, signal);
+  }
+}
+
+const hostOf = (url) => { try { return new URL(url).hostname; } catch { return "the catalogue"; } };
 
 /* ------------------------------------------------------------------ *
  * films - iTunes Search
@@ -130,19 +190,26 @@ export async function search(media, term, opts = {}) {
     return await fn(term, opts);
   } catch (err) {
     if (err.name === "AbortError") throw err;
-    networkLog.push({ url: `(${media} search failed)`, note: err.message, at: Date.now() });
+    record({ url: `${media} search for "${term}"`, note: err.message, failed: true });
     return [];
   }
 }
 
-/** Compact rendering for a model prompt - full records blow the context window. */
-export const forPrompt = (items) =>
+/**
+ * Compact rendering for a model prompt.
+ *
+ * Deliberately mean with characters. Twenty results with a two-hundred-character
+ * synopsis each is three thousand tokens of prompt before the model has written
+ * anything, and the generation then hits max_tokens mid-array and comes back
+ * unparseable. One line per title is enough to rank on.
+ */
+export const forPrompt = (items, { blurb = 110 } = {}) =>
   items
     .map(
       (it, i) =>
         `${i + 1}. [${it.kind}] ${it.title}${it.year ? ` (${it.year})` : ""}` +
-        `${it.by ? ` — ${it.by}` : ""}${it.genre ? ` · ${it.genre}` : ""}` +
-        `${it.blurb ? `\n   ${it.blurb.slice(0, 200)}` : ""}`
+        `${it.by ? ` — ${it.by}` : ""}${it.genre ? ` · ${it.genre.slice(0, 60)}` : ""}` +
+        `${it.blurb && blurb ? `\n   ${it.blurb.slice(0, blurb)}` : ""}`
     )
     .join("\n");
 

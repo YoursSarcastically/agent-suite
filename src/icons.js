@@ -13,8 +13,6 @@ const svg = (paths) =>
 
 export const ICONS = {
   braindump: svg(`<path d="M4 7h10M4 12h13M4 17h7"/><path d="M18.5 15.5l1.6 1.6 3-3.4"/>`),
-  cooldown: svg(`<path d="M12 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z" transform="translate(-2)"/><path d="M17.5 6.5h4M17.5 10h2.5"/>`),
-  scam: svg(`<path d="M12 3.2 4.5 6.3v5.1c0 4.3 3 8.3 7.5 9.4 4.5-1.1 7.5-5.1 7.5-9.4V6.3Z"/><path d="M12 8.4v4.2"/><path d="M12 16.1h.01"/>`),
   pile: svg(`<path d="M3.5 6.2c2.8-1.2 5.7-1.2 8.5 0 2.8-1.2 5.7-1.2 8.5 0v11.6c-2.8-1.2-5.7-1.2-8.5 0-2.8-1.2-5.7-1.2-8.5 0Z"/><path d="M12 6.2v11.6"/>`),
   journal: svg(`<path d="M5 4.5h11a2.5 2.5 0 0 1 2.5 2.5v12.5H7.5A2.5 2.5 0 0 1 5 17Z"/><path d="M5 17a2.5 2.5 0 0 1 2.5-2.5h11"/><path d="M9 8.5h5.5"/>`),
   recommend: svg(`<path d="M4 5.5h16v11H4Z"/><path d="M8 5.5v11M16 5.5v11"/><path d="M4 11h16"/><path d="M9 20h6"/>`),

@@ -155,56 +155,6 @@ export async function runLoop({
   return { results, transcript };
 }
 
-/**
- * Produce, critique, revise.
- *
- * The second half of "agentic" that usually gets skipped: an agent that cannot
- * judge its own output is a pipeline with extra steps. This runs a producer,
- * scores it with a critic, and re-runs with the critique fed back in - which is
- * only affordable at all because a retry costs nothing but the user's own GPU
- * time. On an API, self-critique triples the bill of every single call, which is
- * why so few products do it.
- */
-export async function refine({
-  producer,
-  input,
-  critic,
-  scoreOf,
-  threshold,
-  maxRounds = 3,
-  modelId,
-  signal = null,
-  onRound = () => {},
-}) {
-  let best = null;
-  let bestScore = -Infinity;
-  let note = "";
-
-  for (let round = 1; round <= maxRounds; round++) {
-    if (signal?.aborted) break;
-
-    const attemptInput = note ? `${input}\n\nPREVIOUS ATTEMPT WAS CRITICISED:\n${note}` : input;
-    const attempt = await runAgent(producer, attemptInput, { modelId, signal });
-    const judged = await runAgent(critic, critic.buildCritiqueInput(input, attempt.data), {
-      modelId,
-      signal,
-    });
-
-    const score = scoreOf(judged.data);
-    onRound({ round, attempt: attempt.data, critique: judged.data, score });
-
-    if (score > bestScore) {
-      best = attempt.data;
-      bestScore = score;
-    }
-    if (score >= threshold) return { output: best, score: bestScore, rounds: round, settled: true };
-
-    note = judged.data.critique ?? judged.data.gap ?? "Not specific enough.";
-  }
-
-  return { output: best, score: bestScore, rounds: maxRounds, settled: false };
-}
-
 /** A one-line rendering of any observation, for the planner's scratchpad. */
 function brief(value) {
   if (value == null) return "nothing";

@@ -176,11 +176,16 @@ export async function runAgent(agent, input, opts = {}) {
   try {
     data = JSON.parse(raw);
   } catch {
-    throw new Error(
-      `Model returned unparseable output - likely truncated at max_tokens=${
-        agent.maxTokens ?? 512
-      }. Raw: ${raw.slice(0, 200)}`
+    // Grammar-constrained output is always well-formed *so far*; the only way it
+    // fails to parse is running out of room mid-object. Say that, rather than
+    // showing someone a truncated JSON fragment and the word "unparseable".
+    const err = new Error(
+      "The model ran out of room before it finished. Try a shorter input."
     );
+    err.truncated = true;
+    err.raw = raw;
+    console.warn(`[${agent.id}] truncated at max_tokens=${agent.maxTokens ?? 512}:`, raw.slice(0, 400));
+    throw err;
   }
 
   const { value, repairs } = normalize(data, agent.schema);

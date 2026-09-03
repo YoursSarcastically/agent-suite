@@ -1,6 +1,6 @@
 # Agent Suite
 
-**Six small apps that run entirely in your browser.** No API key, no account, no server, no bill — and they keep working with the wifi off.
+**Four small apps that run entirely in your browser.** No API key, no account, no server, no bill — and they keep working with the wifi off.
 
 ### ▶ [Open it](https://yourssarcastically.github.io/agent-suite/) · [Run the evals](https://yourssarcastically.github.io/agent-suite/evals/run.html)
 
@@ -13,8 +13,6 @@ Needs a WebGPU browser (Chrome/Edge 113+, Safari 18+). First load downloads ~1.1
 | | | |
 |---|---|---|
 | 🧠 **Braindump** | Type the way your head actually works. Get a real list back. | One agent extracts, another commits to what you do next |
-| 🌡 **Cooldown** | Before you hit send at 1am — or after they sent you two words. | Writes, grades itself, rewrites, up to three rounds |
-| 🚨 **Is This a Scam?** | Paste the text about the parcel or the refund. | Model judgement plus deterministic link inspection |
 | 📚 **The Pile** | Everything you saved and never read, now it answers questions. | Agent loop over your own shelf |
 | 📓 **Journal** | Write freely. It files the mood, the people, the promises. | May decline to find a pattern, and often should |
 | 🎬 **Recommend Me** | Describe a mood, get films, shows and books. | The only app that uses the network — and it says so |
@@ -27,11 +25,11 @@ Plus **[Under the hood](https://yourssarcastically.github.io/agent-suite/#workbe
 
 Every "AI agent" demo has the same shape: a thin UI in front of somebody's API. That makes three problems invisible, and hides one capability.
 
-**Cost per call is invisible.** When inference is free at the margin, you stop asking whether an agent should run. That sounds like a downside until you notice what it permits: Cooldown rewrites a message, grades the rewrite against the original, and revises — three times, on every click. Self-critique triples the token cost of a feature, which is why almost no metered product ships it. Here it costs the same as not doing it.
+**Cost per call is invisible.** When inference is free at the margin, you stop asking whether an agent should run. That sounds like a downside until you notice what it permits: The Pile reads your entire shelf on every question rather than an index of it, Journal re-reads every entry you have ever written to look for a pattern, and Recommend Me can throw away a set of search results it does not like and go again with different words. Each of those is a feature a metered product would have to ration.
 
 **Latency is somebody else's problem.** An API call has roughly constant latency. On-device, throughput depends entirely on the machine, and the same agent is pleasant at 40 tok/s and unusable at 4. You only learn this by shipping onto hardware you do not control, so the suite names the GPU it found and reports tokens per second on every run.
 
-**The data question never gets asked.** These are the six things you would least want to paste anywhere: your todo list, your journal, the message you drafted about your boss, the text your mum forwarded, everything you saved to read later. "It never leaves the device" is a different product from "we don't train on your data", and only one of them survives a security review.
+**The data question never gets asked.** These are the things you would least want to paste anywhere: your todo list, your journal, everything you saved to read later — a fairly complete picture of what you are doing, worrying about, and curious about. "It never leaves the device" is a different product from "we don't train on your data", and only one of them survives a security review.
 
 ---
 
@@ -94,7 +92,7 @@ This matters most in Journal, which can return `found: false` when asked for a p
 
 ```
 src/runtime.js      engine, constrained generation, normalization, validation
-src/orchestrator.js the agent loop; next_tool as an enum, plus produce→critique→revise
+src/orchestrator.js the agent loop; next_tool as an enum
 src/agents.js       the original twelve declarative agent records
 src/app-agents.js   agents specific to the six apps
 src/catalog.js      the only file that touches the network, and it logs every request
@@ -129,7 +127,9 @@ Then open `http://localhost:8777`. Deployment is the same story — static files
 
 Five of the six apps make no requests at all once the weights are cached. **Recommend Me does**, because it looks up real titles in [iTunes Search](https://performance-partners.apple.com/search-api), [TVMaze](https://www.tvmaze.com/api) and [Open Library](https://openlibrary.org/developers/api) — none of which need an API key, which is why this is still a static site with no backend and no secret to leak.
 
-The app shows every URL it requested, in the UI, as it happens. The honest claim there is narrower than for the rest: your taste never leaves the tab, only the search words do.
+The app shows every URL it requested, in the UI, as it happens — including the ones that failed and why. The honest claim there is narrower than for the rest: your taste never leaves the tab, only the search words do.
+
+Being unauthenticated has a cost worth knowing about: iTunes allows roughly twenty calls a minute and TVMaze twenty per ten seconds, and a single mood fanning out across three queries and two catalogues will trip both. Requests are queued behind a minimum gap and retried once on a rate limit. OMDb and TMDB would avoid this, but both require an API key, and a key committed to a static site is a key anyone can take.
 
 ---
 

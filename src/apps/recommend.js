@@ -143,7 +143,7 @@ export default {
 
             for (const term of terms) {
               usedTerms.add(`${medium}:${term}`);
-              const hits = await search(medium, term, { limit: 6, signal });
+              const hits = await search(medium, term, { limit: 5, signal });
               for (const hit of hits) {
                 if (!pool.some((p) => p.title === hit.title && p.kind === hit.kind)) pool.push(hit);
               }
@@ -162,18 +162,31 @@ export default {
           }
 
           trail.plan("choose", `Ranking ${pool.length} real titles against what they asked for`);
-          const { data, issues } = await ctx.run(
-            PICK,
+
+          // The candidate list is the biggest thing in this prompt and the only
+          // part that grows without bound, so it is capped before it can push
+          // the generation past max_tokens.
+          const shortlist = pool.slice(0, 10);
+          const ask = (items, blurb) =>
             `THEY ASKED FOR: "${mood}"\n` +
             `${plan.vibe?.length ? `VIBE: ${plan.vibe.join(", ")}\n` : ""}` +
             `${plan.avoid?.length ? `AVOID: ${plan.avoid.join(", ")}\n` : ""}` +
-            `\nCANDIDATES:\n${forPrompt(pool)}`,
-            { signal }
-          );
+            `\nCANDIDATES:\n${forPrompt(items, { blurb })}`;
+
+          let data, issues;
+          try {
+            ({ data, issues } = await ctx.run(PICK, ask(shortlist, 110), { signal }));
+          } catch (err) {
+            if (!err.truncated) throw err;
+            // One retry on half the list with no synopses at all. A shorter
+            // prompt is a worse ranking and a much better outcome than an error.
+            trail.plan("choose", "That was too much to hold at once — retrying with a shorter list");
+            ({ data, issues } = await ctx.run(PICK, ask(pool.slice(0, 6), 0), { signal }));
+          }
           if (issues.length) trail.warn("validate", issues[0].detail);
 
           chosen = data;
-          const kept = valid(data, pool);
+          const kept = valid(data, shortlist);
           trail.done("choose", kept.length
             ? `${kept.length} pick${kept.length === 1 ? "" : "s"}`
             : "nothing in the catalogue fits");
@@ -197,7 +210,7 @@ export default {
           el("p.muted", { text: "The catalogues came back empty. Try describing it differently — the search phrases matter more than the mood does." })));
       }
 
-      const picks = valid(chosen, pool);
+      const picks = valid(chosen, pool.slice(0, 10));
       const shown = picks.length ? picks : pool.slice(0, 6).map((item) => ({ item, why: "" }));
 
       fill(out,
@@ -225,7 +238,9 @@ export default {
         el("summary", { text: `${networkLog.length} request${networkLog.length === 1 ? "" : "s"} left your machine — see exactly what` }),
         el("p.small.muted", { style: { marginTop: "10px" },
           text: "Your mood was never sent. Only the search words the model generated from it, to three public catalogues." }),
-        el("ul", {}, networkLog.map((r) => el("li", { text: r.url })))));
+        el("ul", {}, networkLog.map((r) =>
+          el("li", { style: r.failed ? { opacity: "0.7" } : null },
+            r.failed ? `${r.url} — ${r.note}` : r.url)))));
     }
 
     function skeletons() {

@@ -320,31 +320,22 @@ select.field option { background: var(--surface); color: var(--ink); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .row-end { justify-content: flex-end; }
 
-/* ---------- agent trail ---------- */
+/* ---------- progress ---------- */
 
-.trail { display: flex; flex-direction: column; }
-.trail-step { display: grid; grid-template-columns: 22px 1fr; gap: 13px; padding: 9px 0; animation: rise 0.4s var(--ease-out) both; }
-
-.trail-mark {
-  width: 20px; height: 20px; border-radius: 50%;
-  display: grid; place-items: center;
-  font-size: 11px; font-weight: 600;
-  background: var(--fill); color: var(--ink-2);
-  position: relative;
+.working {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 0 12px; padding: 0 30px;
+  color: var(--ink-2); font-size: 15px;
+  animation: rise 0.3s var(--ease-out) both;
 }
-.trail-step:not(:last-child) .trail-mark::after {
-  content: ""; position: absolute; top: 22px; left: 50%;
-  width: 1px; height: calc(100% + 8px);
-  transform: translateX(-50%);
-  background: var(--hairline);
+.working::before {
+  content: ""; flex: none;
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 1.5px solid var(--hairline-2);
+  border-top-color: var(--ink-2);
+  animation: spin 0.75s linear infinite;
 }
-.trail-mark.working { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.trail-mark.done { background: var(--accent); color: var(--accent-ink); }
-.trail-mark.bad { background: transparent; border: 1px dashed var(--ink-2); color: var(--ink); }
-.trail-tool { font-size: 15px; font-weight: 500; }
-.trail-why { color: var(--ink-2); font-size: 14px; line-height: 1.45; }
-.trail-obs { color: var(--ink-3); font-size: 13px; margin-top: 3px; line-height: 1.45; }
 
 /* ---------- results ---------- */
 

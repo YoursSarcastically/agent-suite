@@ -16,13 +16,11 @@ import {
 
 import braindump from "./apps/braindump.js";
 import journal from "./apps/journal.js";
-import cooldown from "./apps/cooldown.js";
-import scam from "./apps/scam.js";
 import pile from "./apps/pile.js";
 import recommend from "./apps/recommend.js";
 import workbench from "./apps/workbench.js";
 
-const APPS = [braindump, cooldown, scam, pile, journal, recommend, workbench];
+const APPS = [braindump, pile, journal, recommend, workbench];
 const byId = (id) => APPS.find((a) => a.id === id);
 
 const view = document.getElementById("view");
@@ -93,6 +91,8 @@ document.getElementById("boot").append(
  * ------------------------------------------------------------------ */
 
 let activeController = null;
+/** Live status lines, so a finished run always clears its own. */
+const trails = new Set();
 
 const ctx = {
   modelId: () => modelSelect.value,
@@ -130,6 +130,7 @@ const ctx = {
       }
     } finally {
       stopBtn.remove();
+      for (const line of trails) { line.hidden = true; line.textContent = ""; }
       if (button) {
         button.disabled = false;
         button.textContent = original;
@@ -139,63 +140,40 @@ const ctx = {
   },
 
   /**
-   * The agent trail.
+   * Progress.
    *
-   * These apps plan, act, observe and revise, and hiding that behind a spinner
-   * would throw away the most interesting thing about them - so every step the
-   * loop takes renders as it happens.
+   * This was a stepped panel listing every decision the loop made - which was
+   * the most interesting thing on screen for about a week and clutter forever
+   * after. What a person waiting thirty seconds needs is one line saying what
+   * is happening now, so that is all this is. The full step sequence is still
+   * available where it belongs, in the console via the loop's onStep.
+   *
+   * The API is unchanged so apps did not have to be rewritten around it.
    */
   trail() {
-    const list = el("div.trail");
-    const node = el("section.panel", { hidden: true },
-      el("label.label", { text: "What the agent is doing" }), list);
-    let n = 0;
-    let pending = null;
-
-    const settle = (cls, text) => {
-      if (!pending) return;
-      pending.mark.className = `trail-mark ${cls}`;
-      pending.mark.textContent = cls === "bad" ? "!" : "✓";
-      if (text) pending.step.append(el("div.trail-obs", { text }));
-      pending = null;
-    };
-
-    const push = (tool, why) => {
-      settle("done");
+    const node = el("p.working", { hidden: true });
+    const say = (text) => {
+      if (!text) return;
+      node.textContent = text;
       node.hidden = false;
-      const mark = el("div.trail-mark.working", { text: String(++n) });
-      const step = el("div.trail-step", {}, mark,
-        el("div", {}, el("div.trail-tool", { text: tool }), why && el("div.trail-why", { text: why })));
-      list.append(step);
-      pending = { mark, step };
-      return step;
     };
 
-    return {
+    const api = {
       node,
-      reset() { n = 0; pending = null; clear(list); node.hidden = true; },
-      plan: push,
-      done(tool, summary) { if (!pending) push(tool); settle("done", summary); },
-      warn(tool, message) { if (!pending) push(tool); settle("bad", message); },
-
-      /** Adapter for orchestrator.runLoop's onStep. */
+      reset() { node.hidden = true; node.textContent = ""; },
+      plan: (tool, why) => say(why || tool),
+      done: (tool, summary) => say(summary || tool),
+      warn: (tool, message) => say(message || tool),
       fromStep(step) {
-        if (step.kind === "plan") push(step.tool, step.reason);
-        else if (step.kind === "repeat") {
-          push(step.tool, "already tried this exact call — skipped");
-          settle("bad");
-        } else if (step.kind === "observation") settle("done", step.summary);
-        else if (step.kind === "error") settle("bad", step.message);
-        else if (step.kind === "finish") {
-          settle("done");
-          node.hidden = false;
-          list.append(el("div.trail-step", {},
-            el("div.trail-mark.done", { text: "✓" }),
-            el("div", {}, el("div.trail-tool", { text: "finished" }),
-              el("div.trail-why", { text: step.reason }))));
-        }
+        if (step.kind === "plan") say(step.reason || step.tool);
+        else if (step.kind === "observation") say(step.summary);
+        else if (step.kind === "error") say(step.message);
+        else if (step.kind === "finish") api.reset();
       },
     };
+
+    trails.add(node);
+    return api;
   },
 };
 
@@ -206,7 +184,7 @@ const ctx = {
 function home() {
   fill(view,
     el("section.hero", {},
-      el("h1", { text: "Six apps. Nothing leaves your laptop." }),
+      el("h1", { text: "Four apps. Nothing leaves your laptop." }),
       el("p.lede", {
         text: "Every one runs on your own GPU, in this tab. No account, no API key, no bill, " +
               "and they keep working with the wifi off." })),
@@ -215,9 +193,9 @@ function home() {
       el("h3", { text: "Why the browser" }),
       el("p.muted", { style: { marginTop: "10px" },
         text: "Inference costs nothing here, so these apps can do things a metered one cannot: " +
-              "rewrite a message three times and grade itself each round, read back over every " +
-              "journal entry you have written, search a whole shelf on every question. The bill " +
-              "for all of it is the same — your battery." }))
+              "read back over every journal entry you have written, search a whole shelf on every " +
+              "question, throw away a set of search results and try different words. The bill for " +
+              "all of it is the same — your battery." }))
   );
 }
 

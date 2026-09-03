@@ -142,177 +142,6 @@ export const JOURNAL_PATTERN = {
 };
 
 /* ================================================================== *
- * Cooldown
- * ================================================================== */
-
-export const LANDING = {
-  id: "landing",
-  temperature: 0,
-  maxTokens: 560,
-  system:
-    "You predict how a message will land on the person receiving it. Be blunt and specific - " +
-    "'reads as contempt for the four people who were in that meeting' is useful, 'could be " +
-    "perceived as negative' is not. Judge the message as written, not the intent behind it. " +
-    "If it is genuinely fine, say it is fine.",
-  schema: {
-    type: "object",
-    properties: {
-      reads_as: enumField(
-        ["fine", "blunt", "cold", "passive_aggressive", "contemptuous", "panicked", "hostile"],
-        "How it comes across as written"
-      ),
-      damage: score(5, "0 send it, 5 career-limiting"),
-      they_will_hear: { type: "string", description: "What the reader takes away, in one sentence" },
-      you_probably_meant: { type: "string", description: "The legitimate point underneath it" },
-      lines_that_hurt: list("The exact phrases doing the damage"),
-      send_as_is: { type: "boolean", description: "True only if it genuinely needs no change" },
-    },
-    required: ["reads_as", "damage", "they_will_hear", "you_probably_meant", "lines_that_hurt", "send_as_is"],
-  },
-  buildPrompt: (input) => `How will this message land?\n\n---\n${input}\n---`,
-};
-
-export const SOFTEN = {
-  id: "soften",
-  temperature: 0.3,
-  maxTokens: 700,
-  system:
-    "You rewrite a message so it gets the writer what they want without the damage. Keep the hard " +
-    "point - a rewrite that removes the complaint has failed. Keep their voice; do not make a terse " +
-    "person sound like a greetings card. Every number, name and time in the original must appear " +
-    "unchanged - turning \"40 minutes\" into \"an hour\" is a failure even if it reads better.",
-  schema: {
-    type: "object",
-    properties: {
-      rewritten: { type: "string", description: "The version to actually send" },
-      kept: list("The substantive points that survived"),
-      removed: list("What was cut, and it should only ever be heat, not content"),
-      still_says_it: { type: "boolean", description: "Does the hard point survive?" },
-    },
-    required: ["rewritten", "kept", "removed", "still_says_it"],
-  },
-  buildPrompt: (input) => `${input}\n\nRewrite it to get the same point across without the damage.`,
-  /** Wiring for orchestrator.refine(): how the critic is asked about an attempt. */
-  buildCritiqueInput: (original, attempt) =>
-    `ORIGINAL MESSAGE:\n${original}\n\nPROPOSED REWRITE:\n${attempt.rewritten}`,
-};
-
-export const SOFTEN_CRITIC = {
-  id: "soften-critic",
-  temperature: 0,
-  maxTokens: 380,
-  system:
-    "You grade a rewrite against the original. Two failures matter and they pull in opposite " +
-    "directions: the rewrite still causes damage, or the rewrite is so softened the point is gone. " +
-    "Score both. A polite message that no longer says anything scores zero on point_survives.",
-  schema: {
-    type: "object",
-    properties: {
-      point_survives: score(5, "Is the substantive point still there?"),
-      damage_removed: score(5, "Is the heat gone?"),
-      sounds_like_them: score(5, "Does it still sound like the same person?"),
-      critique: { type: "string", description: "The single most useful fix, in one sentence" },
-    },
-    required: ["point_survives", "damage_removed", "sounds_like_them", "critique"],
-  },
-  buildPrompt: (input) => `${input}\n\nGrade this rewrite.`,
-  buildCritiqueInput: (original, attempt) =>
-    `ORIGINAL MESSAGE:\n${original}\n\nPROPOSED REWRITE:\n${attempt.rewritten}`,
-};
-
-export const SUBTEXT = {
-  id: "subtext",
-  temperature: 0,
-  maxTokens: 520,
-  system:
-    "You read a message someone received and say what it probably means. Be careful: most short " +
-    "messages are short because the sender was busy, not because they are angry. Say when there is " +
-    "genuinely nothing to read into it. Flag when the reader is likely overthinking - that is the " +
-    "more common failure and the more useful thing to hear.",
-  schema: {
-    type: "object",
-    properties: {
-      likely_mood: enumField(
-        ["neutral", "busy", "warm", "annoyed", "disappointed", "angry", "unreadable"],
-        "The sender's probable state"
-      ),
-      probable_meaning: { type: "string", description: "Plainly, what they are saying" },
-      is_it_a_no: enumField(["no_its_not", "yes_softly", "yes_clearly", "cant_tell"], "Is this a refusal?"),
-      overthinking: score(5, "5 = there is almost certainly nothing here"),
-      reply_with: { type: "string", description: "A short reply that moves it forward" },
-    },
-    required: ["likely_mood", "probable_meaning", "is_it_a_no", "overthinking", "reply_with"],
-  },
-  buildPrompt: (input) => `Someone sent me this. What does it actually mean?\n\n---\n${input}\n---`,
-};
-
-/* ================================================================== *
- * Is This a Scam?
- * ================================================================== */
-
-export const SCAM_CHECK = {
-  id: "scam-check",
-  temperature: 0,
-  maxTokens: 700,
-  system:
-    "You examine a message someone received and judge whether it is a scam. Explain in the plainest " +
-    "possible words - the reader may be frightened, in a hurry, or not technical. Point at the " +
-    "specific things in this message, never generic advice. Being wrong in the reassuring direction " +
-    "is the expensive mistake, so when the tells are there, say so clearly rather than hedging. " +
-    "But do not call a real delivery notice a scam either: false alarms teach people to ignore you.\n\n" +
-    "`in_one_line` is ONE PLAIN ENGLISH SENTENCE spoken directly to the person, such as " +
-    "\"This is a scam - HMRC never texts about refunds, and that web address is not theirs.\" " +
-    "Never put a web address, a link, or a citation in it.",
-  schema: {
-    type: "object",
-    properties: {
-      verdict: enumField(
-        ["almost_certainly_a_scam", "probably_a_scam", "cant_tell", "probably_genuine"],
-        "The call"
-      ),
-      confidence: score(1, "0 to 1"),
-      in_one_line: { type: "string", description: "What to tell them, in one plain sentence" },
-      tells: list("The specific things in THIS message that give it away"),
-      they_want: enumField(
-        ["your_money", "your_card_details", "your_password", "your_identity", "you_to_install_something", "nothing_obvious"],
-        "What the sender is actually after"
-      ),
-      do_this: list("Two or three concrete steps, in order"),
-      if_you_already_clicked: { type: "string", description: "First thing to do if it is too late" },
-    },
-    required: ["verdict", "confidence", "in_one_line", "tells", "they_want", "do_this", "if_you_already_clicked"],
-  },
-  buildPrompt: (input) =>
-    `Someone received this message. Is it a scam?\n\n---\n${input}\n---\n\n` +
-    `Point at what is in the message itself.`,
-};
-
-export const SCAM_SURFACE = {
-  id: "scam-surface",
-  temperature: 0,
-  maxTokens: 420,
-  system:
-    "You pull the mechanical details out of a suspicious message so they can be checked: web " +
-    "addresses, phone numbers, who it claims to be from, and any deadline it imposes. Copy them " +
-    "exactly as written, including odd spellings - the odd spelling is usually the point.",
-  schema: {
-    type: "object",
-    properties: {
-      claims_to_be: { type: "string", description: "The organisation or person it claims to be" },
-      links: list("Web addresses exactly as written"),
-      numbers: list("Phone numbers exactly as written"),
-      deadline: { type: "string", description: "Any time pressure it applies, or 'none'" },
-      asks_you_to: enumField(
-        ["click_a_link", "call_a_number", "reply_with_details", "send_money", "install_an_app", "nothing"],
-        "The action it pushes"
-      ),
-    },
-    required: ["claims_to_be", "links", "numbers", "deadline", "asks_you_to"],
-  },
-  buildPrompt: (input) => `Pull the checkable details out of this message:\n\n---\n${input}\n---`,
-};
-
-/* ================================================================== *
  * The Pile
  * ================================================================== */
 
@@ -444,21 +273,35 @@ export const TASTE = {
 export const PICK = {
   id: "pick",
   temperature: 0.3,
-  maxTokens: 720,
+  // Everything about this budget is set by throughput, not by quality. At the
+  // ~15 tok/s a 1.5B model manages on an integrated GPU, a thousand tokens of
+  // output is over a minute of staring at a spinner. Given an unbounded list
+  // the model writes a paragraph about every candidate; told to pick four and
+  // keep each to a line, the whole generation fits in a few hundred tokens.
+  maxTokens: 560,
   system:
-    "You choose from a numbered list of real titles and say why each suits the person. Choose ONLY " +
-    "from the list - every number must appear in it. One or two lines each, written to them, " +
-    "specific to what they asked for. No plot summary: they can read the blurb. Say why THIS one, " +
-    "for THIS mood. If the list is a poor match, pick fewer and say so rather than padding.",
+    "You choose from a numbered list of real titles and say why each suits the person.\n\n" +
+    "Rules:\n" +
+    "- Choose ONLY numbers that appear in the list.\n" +
+    "- Choose AT MOST FOUR. Fewer is fine and better than padding.\n" +
+    "- Each reason is ONE sentence, under twenty words, written to them.\n" +
+    "- No plot summary - they can read the blurb. Say why THIS one, for THIS mood.\n" +
+    "- If nothing on the list really fits, pick one or two and set good_match to false.",
   schema: {
     type: "object",
     properties: {
       picks: {
         type: "array",
         items: { type: "integer", minimum: 1 },
-        description: "Numbers from the list, best first",
+        maxItems: 4,
+        description: "At most four numbers from the list, best first",
       },
-      why: list("One or two lines for each pick, in the same order"),
+      why: {
+        type: "array",
+        items: { type: "string" },
+        maxItems: 4,
+        description: "One short sentence per pick, in the same order",
+      },
       good_match: { type: "boolean", description: "False if the catalogue did not really have it" },
     },
     required: ["picks", "why", "good_match"],
@@ -478,12 +321,6 @@ export const APP_AGENTS = {
   "next-action": NEXT_ACTION,
   "journal-read": JOURNAL_READ,
   "journal-pattern": JOURNAL_PATTERN,
-  landing: LANDING,
-  soften: SOFTEN,
-  "soften-critic": SOFTEN_CRITIC,
-  subtext: SUBTEXT,
-  "scam-check": SCAM_CHECK,
-  "scam-surface": SCAM_SURFACE,
   "shelf-read": SHELF_READ,
   librarian: LIBRARIAN,
   "shelf-pick": SHELF_PICK,
