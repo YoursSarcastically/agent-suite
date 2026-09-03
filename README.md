@@ -145,20 +145,47 @@ will not run: `mlc-ai/gemma-3-4b-it-q4f16_1-MLC` exists, but no
 Compiling one is possible through MLC-LLM and is a real piece of work, not a
 config change.
 
-### Qwen3 does not work here
+### Newer models stall, and they all stall identically
 
-Reasoning models and grammar-constrained decoding do not compose, and the
-failure is loud. Qwen3 wants to open a `<think>` block before answering; under a
-JSON grammar the decoder accepts the object or whitespace and nothing else, so
-the model emits whitespace and keeps going. Qwen3 1.7B produced **900 tokens of
-newlines in 103 seconds** and then failed to parse.
+Every model newer than Llama 3.2 and Qwen2.5 that will load here fails the same
+way, and it is the one failure grammar-constrained decoding is supposed to make
+impossible: **a generation that cannot be parsed.**
 
-`/no_think` is Qwen3's own switch for this. It had no effect through WebLLM's
-chat template, in the system prompt or in the last user turn — both measured.
-So Qwen3 is not in the picker, because an option that always fails is worse than
-an option that is missing.
+| | Result |
+|---|---|
+| Qwen3 1.7B | 900 tokens of newlines in 103s, then unparseable |
+| Gemma 3 1B | 1/9 app checks passed; 6 lost to the same stall |
 
-## Layout
+Both emit a valid partial object and then produce nothing but whitespace:
+
+```
+{"tasks": ["ship the deck", "get the invoice from ben", "cancel the gym"]
+                    ⏎ ⏎ ⏎ ⏎ ⏎ …  until max_tokens
+```
+
+My first explanation was Qwen3's `<think>` block having nowhere to go under a
+grammar. **That was wrong.** Gemma 3 has no reasoning mode and fails the same
+way, and Qwen3's own `/no_think` switch changed nothing in either the system
+prompt or the last user turn — both measured.
+
+The likelier cause is structural. Whitespace is legal between any two tokens of
+a JSON document, and emitting it *does not advance the parser*. So when the
+model's preferred continuation is masked out by the grammar, whitespace is the
+highest-probability legal token, and taking it leaves the model in exactly the
+state it was already in — there is no gradient back towards finishing. Older
+models were tuned hard on strict JSON and rarely land there. Newer ones are
+tuned for reasoning traces, markdown and conversational hedging, all of which
+the grammar masks, and the fallback is a whitespace loop.
+
+That fix belongs in the decoder — forbidding or penalising unbounded whitespace
+runs — not in application code. Until then, newer is not better here.
+
+Gemma 3 1B also needed a config correction just to start: WebLLM's own prebuilt
+record sets `context_window_size: 4096` on a sliding-window model, and the
+engine then refuses it, insisting on exactly one of the two. Models can now
+carry a `chatOpts` override for that class of problem.
+
+## Layout## Layout
 
 ```
 src/runtime.js      engine, constrained generation, normalization, validation

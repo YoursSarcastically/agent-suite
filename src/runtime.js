@@ -28,22 +28,31 @@ import * as webllm from "https://esm.run/@mlc-ai/web-llm";
  * like Nope but funnier" with the search terms `funnier` and `Nope`, where the
  * 3B answers `horror comedy` and `sci-fi comedy`.
  *
- * Qwen3 is deliberately absent, and it is worth saying why, because it is the
- * obvious thing to reach for and it does not work here.
+ * Every model newer than these stalls, and they all stall the same way.
  *
- * Qwen3 is a hybrid reasoning model: it wants to open a <think> block before
- * answering. Under a JSON grammar there is nowhere for that to go - at that
- * position the decoder accepts the object or whitespace, nothing else - so the
- * model emits whitespace, and keeps emitting it. Qwen3 1.7B produced 900 tokens
- * of newlines in 103 seconds and then failed to parse, which is the one thing a
- * grammar-constrained generation is supposed to make impossible.
+ * Qwen3 1.7B and Gemma 3 1B both emit a valid partial object and then produce
+ * nothing but newlines until max_tokens - 900 tokens of whitespace in 103
+ * seconds for Qwen3, 6 of 9 app evals lost the same way for Gemma 3. A
+ * grammar-constrained generation that cannot be parsed is the one outcome the
+ * whole approach is supposed to make unreachable.
  *
- * `/no_think` is Qwen3's own switch for this and it had no effect through
- * WebLLM's chat template, in the system prompt or in the user turn. Both were
- * measured. Until that is fixed upstream, or WebLLM exposes
- * `enable_thinking: false`, reasoning models and grammar-constrained decoding
- * do not compose - and shipping a picker option that always fails is worse than
- * not offering it.
+ * The first guess was Qwen3's <think> block having nowhere to go under a
+ * grammar. That was wrong: Gemma 3 has no reasoning mode and fails identically,
+ * and `/no_think` changed nothing in either the system prompt or the user turn.
+ *
+ * The likelier cause is structural. Whitespace is legal between any two tokens
+ * of a JSON document, and emitting it does not advance the parser. So whenever
+ * the model's preferred continuation is masked out by the grammar, whitespace
+ * is the highest-probability *legal* token available, and taking it changes
+ * nothing about the state it is in - there is no gradient back towards
+ * finishing. Older instruction-tuned models were tuned hard on emitting strict
+ * JSON and rarely land in that hole. Newer ones are tuned for reasoning traces,
+ * markdown and conversational hedging, all of which the grammar masks, and the
+ * fallback is a whitespace loop.
+ *
+ * The fix belongs in the decoder - forbidding unbounded whitespace runs, or
+ * penalising them - not in this file. Until then, newer is not better here, and
+ * a picker option that always fails is worse than one that is missing.
  */
 export const DEFAULT_MODEL = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 
@@ -133,9 +142,14 @@ export async function getEngine(modelId = DEFAULT_MODEL, onProgress = () => {}) 
   if (enginePromise && activeModel === modelId) return enginePromise;
 
   activeModel = modelId;
-  enginePromise = webllm.CreateMLCEngine(modelId, {
-    initProgressCallback: (p) => onProgress(p.progress ?? 0, p.text ?? ""),
-  });
+  // Some prebuilt records ship a config the engine will not accept; a model may
+  // carry the correction with it rather than the caller having to know.
+  const chatOpts = MODELS.find((m) => m.id === modelId)?.chatOpts;
+  enginePromise = webllm.CreateMLCEngine(
+    modelId,
+    { initProgressCallback: (p) => onProgress(p.progress ?? 0, p.text ?? "") },
+    chatOpts
+  );
   return enginePromise;
 }
 
