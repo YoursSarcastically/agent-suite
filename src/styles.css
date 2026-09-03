@@ -275,9 +275,13 @@ select.field option { background: var(--surface); color: var(--ink); }
 .gate {
   min-height: min(76vh, 720px);
   display: flex; flex-direction: column; justify-content: center;
-  max-width: 30ch;
+  /* Not a ch value: `ch` resolves against the 17px body size, not the 72px
+     display size, so a "30ch" gate is ~255px wide and shatters the headline
+     into six lines. The measure is set on the prose instead. */
+  max-width: 700px;
   padding: 40px 0;
 }
+.gate h1 { max-width: 13em; }
 .gate h1 { margin-bottom: 22px; }
 .gate .lede { font-size: 19px; line-height: 1.42; letter-spacing: -0.019em; color: var(--ink-2); max-width: 34ch; }
 

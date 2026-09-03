@@ -92,6 +92,7 @@ export async function clearModelCache() {
 
 let enginePromise = null;
 let activeModel = null;
+let usingWorker = true;
 
 /* ------------------------------------------------------------------ *
  * device
@@ -145,16 +146,36 @@ export async function getEngine(modelId = DEFAULT_MODEL, onProgress = () => {}) 
   // Some prebuilt records ship a config the engine will not accept; a model may
   // carry the correction with it rather than the caller having to know.
   const chatOpts = MODELS.find((m) => m.id === modelId)?.chatOpts;
-  enginePromise = webllm.CreateMLCEngine(
-    modelId,
-    { initProgressCallback: (p) => onProgress(p.progress ?? 0, p.text ?? "") },
-    chatOpts
-  );
+  const config = { initProgressCallback: (p) => onProgress(p.progress ?? 0, p.text ?? "") };
+
+  enginePromise = createEngine(modelId, config, chatOpts);
   return enginePromise;
+}
+
+/**
+ * Prefer a worker; fall back to the main thread.
+ *
+ * The worker is the whole point - see src/worker.js - but it is not guaranteed
+ * to exist. Module workers need a same-origin script URL, so anything opening
+ * this from a file:// URL, or a browser without module-worker support, has to
+ * keep working rather than showing a blank page. The fallback is the old
+ * behaviour: correct, and janky while it generates.
+ */
+async function createEngine(modelId, config, chatOpts) {
+  try {
+    const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+    return await webllm.CreateWebWorkerMLCEngine(worker, modelId, config, chatOpts);
+  } catch (err) {
+    console.warn("Worker engine unavailable, running on the main thread:", err.message);
+    usingWorker = false;
+    return webllm.CreateMLCEngine(modelId, config, chatOpts);
+  }
 }
 
 export const isLoaded = () => Boolean(enginePromise);
 export const loadedModel = () => activeModel;
+/** False when the worker could not start and inference is blocking the page. */
+export const isOffMainThread = () => usingWorker;
 
 /**
  * Stop the current generation without tearing the engine down.

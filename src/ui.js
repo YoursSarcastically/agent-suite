@@ -283,7 +283,8 @@ function gate() {
   }, loading ? "Loading…" : returning ? "Start" : `Download ${model.vram.replace("~", "")}`);
 
   return el("section.gate", {},
-    el("h1", {}, "An AI that runs", el("br"), el("span.dim", { text: "on your computer." })),
+    el("h1", {}, "An AI that runs", el("br"),
+      el("span.dim", { text: "entirely in this browser tab." })),
     el("p.lede", {
       text: returning
         ? "The model is already downloaded. Starting it takes a few seconds."
