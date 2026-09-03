@@ -65,11 +65,10 @@ export default {
   id: "recommend",
   name: "Recommend Me",
   icon: "recommend",
-  blurb: "Films, shows and books",
-  tag: "Model picks the words, then ranks what three real catalogues return",
+  blurb: "Describe a mood, get films, shows and books",
 
   mount(root, ctx) {
-    const input = el("input.field", { type: "text", placeholder: "What are you in the mood for?" });
+    const input = el("input.field", { type: "text", placeholder: "e.g. something funny and not too long" });
     const out = el("div");
     const netEl = el("div");
     const trail = ctx.trail();
@@ -79,14 +78,14 @@ export default {
 
     root.append(
       el("section.panel", {},
-        el("label.label", { text: "The mood" }),
+        el("label.label", { text: "What are you in the mood for?" }),
         input,
         el("div.row", { style: { marginTop: "14px" } }, goBtn,
           ...SAMPLES.map((s) => el("button.btn.btn-ghost.btn-sm", {
             onclick: () => { input.value = s; go(); },
           }, s))),
         el("p.small.dim", { style: { marginTop: "14px" },
-          text: "Uses the internet to look up real titles. The model never invents one." })),
+          text: "This app searches real film, TV and book catalogues, so every title is real." })),
       trail.node,
       out,
       netEl
@@ -94,7 +93,7 @@ export default {
 
     async function go() {
       const mood = input.value.trim();
-      if (!mood) return ctx.toast("Tell it what you're in the mood for.");
+      if (!mood) return ctx.toast("Describe what you feel like watching or reading.");
 
       await ctx.busy(goBtn, async (signal) => {
         trail.reset();
@@ -110,8 +109,8 @@ export default {
         // genuinely poor match, which the ranking agent has to declare itself.
         for (let round = 1; round <= 2; round++) {
           trail.plan("plan_searches", round === 1
-            ? "Turning the mood into words a catalogue search box understands"
-            : "First search missed — trying different words");
+            ? "Working out what to search for"
+            : "That did not fit — trying different search terms");
 
           const { data: plan } = await ctx.run(TASTE, note ? `${mood}\n\n${note}` : mood, { signal });
 
@@ -155,7 +154,7 @@ export default {
             continue;
           }
 
-          trail.plan("choose", `Ranking ${pool.length} real titles against what they asked for`);
+          trail.plan("choose", `Choosing from ${pool.length} real titles`);
 
           // The candidate list is the biggest thing in this prompt and the only
           // part that grows without bound, so it is capped before it can push
@@ -167,7 +166,7 @@ export default {
           // gets a real genre list, plot and IMDb rating before the model sees
           // it. Bounded on purpose: ten titles a search, cached, free tier.
           if (shortlist.some((it) => it.kind === "film")) {
-            trail.plan("enrich", "Looking up ratings and plots for the films worth considering");
+            trail.plan("enrich", "Looking up ratings and plots");
             await enrichFilms(shortlist, { signal });
             renderNetwork();
           }
@@ -184,7 +183,7 @@ export default {
             if (!err.truncated) throw err;
             // One retry on half the list with no synopses at all. A shorter
             // prompt is a worse ranking and a much better outcome than an error.
-            trail.plan("choose", "That was too much to hold at once — retrying with a shorter list");
+            trail.plan("choose", "Too many options — narrowing the list");
             ({ data, issues } = await ctx.run(PICK, ask(pool.slice(0, 6), 0), { signal }));
           }
           if (issues.length) trail.warn("validate", issues[0].detail);
@@ -211,7 +210,7 @@ export default {
     function render(chosen, pool) {
       if (!pool.length) {
         return fill(out, el("section.panel", {},
-          el("p.muted", { text: "The catalogues came back empty. Try describing it differently — the search phrases matter more than the mood does." })));
+          el("p.muted", { text: "Nothing came back. Try describing it differently — a genre or theme works better than a feeling." })));
       }
 
       const picks = valid(chosen, pool.slice(0, 10));
@@ -221,9 +220,9 @@ export default {
         el("section.panel", {},
           el("div.row", { style: { marginBottom: "16px" } },
             el("span.pill.pill-accent", { text: `${shown.length} for you` }),
-            el("span.pill", { text: `chosen from ${pool.length} real titles` }),
+            el("span.pill", { text: `from ${pool.length} real titles` }),
             chosen && chosen.good_match === false &&
-              el("span.pill.pill-warn", { text: "the catalogue didn't really have this — treat as loose" })),
+              el("span.pill.pill-warn", { text: "not a close match" })),
           el("div.media-grid", {}, shown.map(({ item, why }) =>
             el("div.media", {},
               el("span.kind", { text: item.kind }),
@@ -234,15 +233,15 @@ export default {
               }),
               why && el("span.why", { text: why }),
               item.link && el("a.small", { href: item.link, target: "_blank", rel: "noopener noreferrer",
-                text: "Look it up ↗" }))))));
+                text: "More info ↗" }))))));
     }
 
     function renderNetwork() {
       if (!networkLog.length) return fill(netEl);
       fill(netEl, el("details.net", {},
-        el("summary", { text: `${networkLog.length} request${networkLog.length === 1 ? "" : "s"} left your machine — see exactly what` }),
+        el("summary", { text: `${networkLog.length} search${networkLog.length === 1 ? "" : "es"} sent to the internet — see exactly what` }),
         el("p.small.muted", { style: { marginTop: "10px" },
-          text: "Your mood was never sent. Only the search words the model generated from it, to three public catalogues." }),
+          text: "What you typed was never sent. Only the search words, to three public catalogues." }),
         el("ul", {}, networkLog.map((r) =>
           el("li", { style: r.failed ? { opacity: "0.7" } : null },
             r.failed ? `${r.url} — ${r.note}` : r.url)))));

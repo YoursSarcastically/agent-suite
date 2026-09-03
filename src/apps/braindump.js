@@ -22,12 +22,11 @@ export default {
   id: "braindump",
   name: "Braindump",
   icon: "braindump",
-  blurb: "Messy thoughts, real tasks",
-  tag: "Extraction · one agent, one decision agent",
+  blurb: "Turn messy notes into a proper task list",
 
   mount(root, ctx) {
     const input = el("textarea.field", {
-      placeholder: "Everything that's rattling around.",
+      placeholder: "Write it however it comes out. Punctuation optional.",
       spellcheck: false,
       rows: 5,
     });
@@ -35,12 +34,12 @@ export default {
     const nextEl = el("div");
     const trail = ctx.trail();
 
-    const sortBtn = el("button.btn.btn-primary", { onclick: sort }, "Sort this out");
-    const nextBtn = el("button.btn", { onclick: whatNow }, "What now?");
+    const sortBtn = el("button.btn.btn-primary", { onclick: sort }, "Make a task list");
+    const nextBtn = el("button.btn", { onclick: whatNow }, "What should I do next?");
     const sampleBtn = el(
       "button.btn.btn-ghost.btn-sm",
       { onclick: () => (input.value = SAMPLE) },
-      "Use an example"
+      "Show me an example"
     );
 
     render();
@@ -49,24 +48,24 @@ export default {
       el(
         "section.panel",
         {},
-        el("label.label", { text: "Dump" }),
+        el("label.label", { text: "What's on your mind" }),
         input,
         el("div.row", { style: { marginTop: "14px" } }, sortBtn, nextBtn, sampleBtn)
       ),
       trail.node,
       nextEl,
-      el("section.panel", {}, el("label.label", { text: "Your list" }), listEl)
+      el("section.panel", {}, el("label.label", { text: "Your tasks" }), listEl)
     );
 
     /* ---------------- extraction ---------------- */
 
     async function sort() {
       const text = input.value.trim();
-      if (!text) return ctx.toast("Put something in the box first.");
+      if (!text) return ctx.toast("Write something first.");
 
       await ctx.busy(sortBtn, async (signal) => {
         trail.reset();
-        trail.plan("braindump", "Pulling out every distinct thing you have to do");
+        trail.plan("braindump", "Finding the separate things you need to do");
 
         const result = await ctx.run(BRAINDUMP, text, { signal });
         const rows = zip(result.data);
@@ -91,11 +90,11 @@ export default {
 
     async function whatNow() {
       const open = tasks.all().filter((t) => !t.done);
-      if (!open.length) return ctx.toast("Nothing open. Enjoy it.");
+      if (!open.length) return ctx.toast("Nothing left to do.");
 
       await ctx.busy(nextBtn, async (signal) => {
         trail.reset();
-        trail.plan("next-action", "Reading the whole list and committing to one");
+        trail.plan("next-action", "Reading your whole list to pick one");
 
         const listing = open
           .map(
@@ -123,7 +122,7 @@ export default {
              el("span.pill", { text: titleCase(data.because) })),
           el("h2", { text: chosen?.task ?? "", style: { margin: "12px 0 8px" } }),
           el("p.muted", { text: data.say_it }),
-          data.skip_for_now && el("p.small.dim", { text: `Let go of: ${data.skip_for_now}` })
+          data.skip_for_now && el("p.small.dim", { text: `Skip today: ${data.skip_for_now}` })
         )
       );
     }
@@ -135,7 +134,7 @@ export default {
       if (!all.length) {
         return fill(
           listEl,
-          el("div.empty", {}, el("div.big", { text: "\u{1F4AD}" }), el("p", { text: "Nothing here yet." }))
+          el("div.empty", {}, el("div.big", { text: "\u{1F4AD}" }), el("p", { text: "No tasks yet." }))
         );
       }
 
@@ -150,7 +149,7 @@ export default {
           done.length > 0 &&
             el("button.btn.btn-ghost.btn-sm", {
               onclick: () => { for (const t of done) tasks.remove(t.id); render(); },
-            }, "Clear done")
+            }, "Clear completed")
         ),
         [...open, ...done].map((t) => taskRow(t, highlight === t.id))
       );

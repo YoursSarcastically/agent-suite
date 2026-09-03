@@ -1,16 +1,15 @@
 /**
- * The Pile - the read-later list that reads itself.
+ * Reading List - save articles, then find them by describing them.
  *
- * Saving was never the hard part. The hard part is that a pile of 400 articles
- * is a decision you have to make every time you look at it, so this app is
- * built around not making you decide: ask for something half-remembered and it
- * finds it, say how long you have and it picks one, and it will tell you what
- * your saving habits say about you whether you asked or not.
+ * The point is the search. You remember what an article was about long after
+ * you have forgotten its title, its author and the site it was on, so keyword
+ * search over saved articles mostly fails when you need it. Here the model
+ * reads a summary of everything saved and matches on meaning instead.
  *
- * Semantic search here is the model reading a shelf index, not embeddings. That
- * is slower and it does not scale past a few hundred items, but it needs no
- * second model download and it degrades honestly: the librarian is allowed to
- * return found=false rather than confidently handing over the wrong article.
+ * That is the model reading an index, not embeddings. It is slower and it will
+ * not scale past a few hundred articles, but it needs no second model download
+ * and it fails honestly: the matcher can return found=false rather than
+ * confidently handing back the wrong article.
  */
 
 import { el, fill, ago } from "../dom.js";
@@ -22,30 +21,32 @@ const shelf = collection("pile:articles", { cap: 250 });
 
 export default {
   id: "pile",
-  name: "The Pile",
+  name: "Reading List",
   icon: "pile",
-  blurb: "Everything you saved, searchable",
-  tag: "Agent loop over your own shelf",
+  blurb: "Save articles, then find them by what they were about",
+
 
   mount(root, ctx) {
     const paste = el("textarea.field", {
       rows: 4,
-      placeholder: "Paste an article.",
+      placeholder: "Paste the full text of an article",
     });
     const ask = el("input.field", {
       type: "text",
-      placeholder: "\"the one about why teams get slower as they grow\"",
+      placeholder: "Describe what it was about",
     });
     const answerEl = el("div");
     const shelfEl = el("div.stack");
     const trail = ctx.trail();
 
-    const saveBtn = el("button.btn.btn-primary", { onclick: save }, "File it");
-    const askBtn = el("button.btn.btn-primary", { onclick: askShelf }, "Ask the shelf");
-    const timeBtn = el("button.btn", { onclick: () => askShelf("I have 10 minutes and low energy") },
-      "I have 10 minutes");
-    const mirrorBtn = el("button.btn", { onclick: () => askShelf("what do my saving habits say about me") },
-      "Tell me something uncomfortable");
+    const saveBtn = el("button.btn.btn-primary", { onclick: save }, "Save article");
+    // Not `onclick: askShelf` - a handler is called with the Event, which would
+    // arrive as `preset` and be searched for as the string "[object PointerEvent]".
+    const askBtn = el("button.btn.btn-primary", { onclick: () => askShelf() }, "Search");
+    const timeBtn = el("button.btn", { onclick: () => askShelf("I have 10 minutes and not much energy") },
+      "What should I read now?");
+    const mirrorBtn = el("button.btn", { onclick: () => askShelf("what do I save but never read") },
+      "What do I actually read?");
 
     ask.addEventListener("keydown", (e) => { if (e.key === "Enter") askShelf(); });
 
@@ -62,30 +63,32 @@ export default {
 
     render();
 
+    const findPanel = el("section.panel", { hidden: shelf.count() === 0 },
+      el("label.label", { text: "Find an article" }),
+      ask,
+      el("div.row", { style: { marginTop: "14px" } }, askBtn, timeBtn, mirrorBtn));
+
     root.append(
       el("section.panel", {},
-        el("label.label", { text: "Add to the pile" }),
+        el("label.label", { text: "Save an article" }),
         paste,
         el("div.row", { style: { marginTop: "14px" } }, saveBtn,
-          el("span.small.dim", { text: "or drop a file anywhere" }))),
-      el("section.panel", {},
-        el("label.label", { text: "Ask" }),
-        ask,
-        el("div.row", { style: { marginTop: "14px" } }, askBtn, timeBtn, mirrorBtn)),
+          el("span.small.dim", { text: "or drag a .txt file onto this page" }))),
+      findPanel,
       trail.node,
       answerEl,
-      el("section.panel", {}, el("label.label", { text: "The shelf" }), shelfEl)
+      el("section.panel", {}, el("label.label", { text: "Saved articles" }), shelfEl)
     );
 
     /* ---------------- filing ---------------- */
 
     async function save() {
       const text = paste.value.trim();
-      if (text.length < 120) return ctx.toast("Paste a bit more — that is too short to file usefully.");
+      if (text.length < 120) return ctx.toast("That is too short. Paste the whole article.");
 
       await ctx.busy(saveBtn, async (signal) => {
         trail.reset();
-        trail.plan("shelf-read", "Reading it once so it never has to be read again");
+        trail.plan("shelf-read", "Reading and summarising the article");
 
         // Long articles blow the context window; the opening is where the
         // argument lives, and the tail is usually related-links furniture.
@@ -95,7 +98,7 @@ export default {
         trail.done("shelf-read", `${data.title} — ${data.minutes} min, ${data.difficulty}`);
         paste.value = "";
         render();
-        ctx.toast("Filed.");
+        ctx.toast("Saved.");
       });
     }
 
@@ -103,10 +106,10 @@ export default {
 
     async function askShelf(preset) {
       const query = preset ?? ask.value.trim();
-      if (!query) return ctx.toast("Ask it something.");
+      if (!query) return ctx.toast("Type what the article was about.");
 
       const all = shelf.all();
-      if (!all.length) return ctx.toast("Nothing on the shelf yet.");
+      if (!all.length) return ctx.toast("Save an article first.");
 
       await ctx.busy(preset ? undefined : askBtn, async (signal) => {
         trail.reset();
@@ -120,17 +123,17 @@ export default {
         const tools = [
           {
             name: "find_by_description",
-            description: "Find the one article the person is half-remembering. Use when they describe an article.",
+            description: "Find a saved article from a description of it. Use when they describe an article.",
             run: async () => {
               const { data } = await ctx.run(LIBRARIAN,
                 `SHELF:\n${index}\n\nTHEY REMEMBER:\n"${query}"`, { signal });
               return data.found ? { ...data, article: all[data.pick - 1] } : { found: false };
             },
-            summarize: (r) => (r.found ? `matched: ${r.article?.title}` : "nothing on the shelf matches"),
+            summarize: (r) => (r.found ? `Found: ${r.article?.title}` : "No saved article matches that"),
           },
           {
             name: "pick_for_time",
-            description: "Choose one article to read right now. Use when they mention how much time or energy they have.",
+            description: "Pick one article to read now. Use when they mention time or energy.",
             run: async () => {
               const unread = all.filter((a) => !a.read);
               const pool = (unread.length ? unread : all)
@@ -140,11 +143,11 @@ export default {
                 `UNREAD:\n${pool}\n\nTHEY SAID:\n"${query}"`, { signal });
               return { ...data, article: (unread.length ? unread : all)[data.pick - 1] };
             },
-            summarize: (r) => `picked: ${r.article?.title}`,
+            summarize: (r) => `Suggests: ${r.article?.title}`,
           },
           {
             name: "reflect_on_habits",
-            description: "Say what their saving-versus-reading habits reveal. Use when they ask about themselves.",
+            description: "Describe what they save versus what they read. Use when they ask about their habits.",
             run: async () => {
               const stats = habitStats(all);
               const { data } = await ctx.run(MIRROR,
@@ -176,39 +179,39 @@ export default {
       const mirror = results.reflect_on_habits;
 
       if (found?.found && found.article) {
-        nodes.push(articleCard(found.article, "This one", found.because));
+        nodes.push(articleCard(found.article, "Best match", found.because));
       } else if (found && !found.found) {
         nodes.push(el("section.panel", {},
-          el("span.pill.pill-warn", { text: "Not on the shelf" }),
+          el("span.pill.pill-warn", { text: "No match" }),
           el("p.muted", { style: { marginTop: "10px" },
-            text: "Nothing here matches that. The librarian is allowed to say no rather than hand you the wrong article." })));
+            text: "None of your saved articles match that description." })));
       }
 
       if (picked?.article) {
-        nodes.push(articleCard(picked.article, "Read this now", picked.because));
+        nodes.push(articleCard(picked.article, "Read this next", picked.because));
         if (picked.not_now) {
           nodes.push(el("section.panel.panel-tight", {},
-            el("span.pill", { text: "Deliberately not today" }),
+            el("span.pill", { text: "Skip for now" }),
             el("p.muted", { style: { marginTop: "8px" }, text: picked.not_now })));
         }
       }
 
       if (mirror) {
         nodes.push(el("section.panel", {},
-          el("span.pill.pill-accent", { text: "The mirror" }),
+          el("span.pill.pill-accent", { text: "Your reading habits" }),
           el("h2", { style: { margin: "12px 0 12px" }, text: mirror.observation }),
           el("div.stat-row", {},
             el("div.stat", {}, el("div.n", { text: mirror.stats.readCount }), el("div.k", { text: "read" })),
             el("div.stat", {}, el("div.n", { text: mirror.stats.total }), el("div.k", { text: "saved" })),
-            el("div.stat", {}, el("div.n", { text: `${mirror.stats.rate}%` }), el("div.k", { text: "actually read" }))),
+            el("div.stat", {}, el("div.n", { text: `${mirror.stats.rate}%` }), el("div.k", { text: "of saved, read" }))),
           el("div.row", { style: { marginTop: "16px" } },
-            mirror.saves_but_avoids && el("span.pill.pill-warn", { text: `Hoards: ${mirror.saves_but_avoids}` }),
-            mirror.actually_reads && el("span.pill.pill-good", { text: `Reads: ${mirror.actually_reads}` }))));
+            mirror.saves_but_avoids && el("span.pill.pill-warn", { text: `Saves but skips: ${mirror.saves_but_avoids}` }),
+            mirror.actually_reads && el("span.pill.pill-good", { text: `Actually reads: ${mirror.actually_reads}` }))));
       }
 
       if (!nodes.length) {
         nodes.push(el("section.panel", {},
-          el("p.muted", { text: "The loop finished without settling on an answer. Rephrasing usually fixes it." })));
+          el("p.muted", { text: "No answer this time. Rephrasing the question usually helps." })));
       }
 
       fill(answerEl, nodes);
@@ -226,7 +229,7 @@ export default {
           ...a.topics.slice(0, 4).map((t) => el("span.pill", { text: t }))),
         el("div.row", { style: { marginTop: "14px" } },
           el("button.btn.btn-sm", {
-            onclick: () => { shelf.update(a.id, { read: !a.read }); render(); ctx.toast(a.read ? "Marked unread." : "Marked read."); },
+            onclick: () => { shelf.update(a.id, { read: !a.read }); render(); ctx.toast(a.read ? "Marked as unread." : "Marked as read."); },
           }, a.read ? "Mark unread" : "Mark as read")));
     }
 
@@ -234,10 +237,11 @@ export default {
 
     function render() {
       const all = shelf.all();
+      findPanel.hidden = all.length === 0;
       if (!all.length) {
         return fill(shelfEl, el("div.empty", {},
           el("div.big", { text: "\u{1F4D6}" }),
-          el("p", { text: "Empty shelf. Paste an article to start the pile you'll feel guilty about." })));
+          el("p", { text: "No articles saved yet." })));
       }
 
       const stats = habitStats(all);
@@ -246,7 +250,7 @@ export default {
           el("span.pill", { text: `${all.length} saved` }),
           el("span.pill", { text: `${stats.readCount} read` }),
           el("span", { class: `pill ${stats.rate < 30 ? "pill-warn" : "pill-good"}`,
-            text: `${stats.rate}% of what you save` })),
+            text: `${stats.rate}% read` })),
         all.map((a) => el("div.card", {},
           el("div.row", {},
             el("strong", { text: a.title }),

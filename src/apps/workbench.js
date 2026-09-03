@@ -15,8 +15,7 @@ export default {
   id: "workbench",
   name: "Under the hood",
   icon: "workbench",
-  blurb: "The twelve agents underneath",
-  tag: "The original suite",
+  blurb: "The twelve agents these apps are built from",
 
   mount(root, ctx) {
     const grid = el("div.agent-grid");
@@ -62,7 +61,7 @@ export default {
 
       async function run() {
         const text = input.value.trim();
-        if (!text) return ctx.toast("Give the agent something to work with.");
+        if (!text) return ctx.toast("Enter some text first.");
 
         await ctx.busy(runBtn, async (signal) => {
           output.textContent = "";

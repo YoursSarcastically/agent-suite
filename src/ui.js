@@ -30,6 +30,9 @@ import pile from "./apps/pile.js";
 import recommend from "./apps/recommend.js";
 import workbench from "./apps/workbench.js";
 
+/** Byline. Replace with the real profile URL. */
+const AUTHOR = { name: "Suraj", linkedin: "https://www.linkedin.com/in/YOUR-PROFILE/" };
+
 const APPS = [braindump, pile, journal, recommend, workbench];
 const byId = (id) => APPS.find((a) => a.id === id);
 
@@ -73,7 +76,7 @@ async function load(modelId) {
       paintProgress();
     });
     write("engine:loaded", [...new Set([...read("engine:loaded", []), modelId])]);
-    toast(`${labelFor(modelId)} is running on ${device.label || "your GPU"}.`);
+    toast(`Ready. ${labelFor(modelId)} is running on ${device.label || "your GPU"}.`);
   } catch (err) {
     // The cache-full failure arrives as an opaque internal error, so it is
     // named here rather than passed through.
@@ -89,14 +92,56 @@ async function load(modelId) {
   }
 }
 
+/**
+ * WebLLM's progress string is written for a console, not a person:
+ *
+ *   "Fetching param cache[31/58]: 998MB fetched. 57% completed, 85 secs
+ *    elapsed. It can take a while when we first visit this page to populate
+ *    the cache. Later refreshes will become faster."
+ *
+ * Four sentences, one of which is an apology. What someone waiting actually
+ * needs is which of the two phases they are in, how far through, and roughly
+ * how much longer - so the string is parsed down to that and the rest dropped.
+ */
+function readProgress(text) {
+  const downloading = /fetch/i.test(text);
+  const loading = /loading model|from cache/i.test(text);
+  const mb = Number(text.match(/([\d.]+)\s*MB/i)?.[1] ?? 0);
+  const secs = Number(text.match(/(\d+)\s*secs?\s*elapsed/i)?.[1] ?? 0);
+  const pct = Number(text.match(/(\d+)%\s*completed/i)?.[1] ?? NaN);
+
+  let phase = "Starting up";
+  if (loading) phase = "Loading onto your GPU";
+  else if (downloading) phase = "Downloading the model";
+  else if (/finish/i.test(text)) phase = "Almost ready";
+
+  // Remaining time from the rate so far. Only shown once there is enough of a
+  // sample for it not to be a wild guess.
+  let eta = "";
+  if (secs > 6 && pct >= 5 && pct < 100) {
+    const left = Math.round((secs / pct) * (100 - pct));
+    if (left > 3) eta = left >= 60 ? `about ${Math.round(left / 60)} min left` : `about ${left}s left`;
+  }
+
+  return { phase, mb, pct: Number.isFinite(pct) ? pct : null, eta };
+}
+
 /** Progress updates many times a second; repainting the whole view would thrash. */
 function paintProgress() {
-  const line = document.getElementById("progress-line");
-  if (line) line.textContent = progressText;
-  if (barTrack) barTrack.hidden = false;
-  if (bar) bar.style.width = `${progressPct}%`;
-  const pct = document.getElementById("progress-pct");
-  if (pct) pct.textContent = `${progressPct}%`;
+  const p = readProgress(progressText);
+  const set = (id, value) => {
+    const node = document.getElementById(id);
+    if (node && value != null) node.textContent = value;
+  };
+
+  set("progress-phase", p.phase);
+  set("progress-pct", p.pct == null ? "" : `${p.pct}%`);
+  set("progress-detail", [p.mb ? `${p.mb >= 1024 ? (p.mb / 1024).toFixed(1) + " GB" : p.mb + " MB"}` : "", p.eta]
+    .filter(Boolean).join(" · "));
+
+  if (barTrack) barTrack.hidden = true;
+  const fill = document.getElementById("progress-fill");
+  if (fill && p.pct != null) fill.style.width = `${p.pct}%`;
 }
 
 const labelFor = (id) => MODELS.find((m) => m.id === id)?.label ?? id;
@@ -137,7 +182,7 @@ const ctx = {
    * cancelling actually reaches the engine.
    */
   async busy(button, fn) {
-    if (activeController) return toast("Something is already running.");
+    if (activeController) return toast("Wait for the current task to finish.");
     activeController = new AbortController();
 
     const original = button?.textContent;
@@ -238,29 +283,37 @@ function gate() {
   }, loading ? "Loading…" : returning ? "Start" : `Download ${model.vram.replace("~", "")}`);
 
   return el("section.gate", {},
-    el("h1", {}, "An LLM,", el("br"), el("span.dim", { text: "in this tab." })),
+    el("h1", {}, "An AI that runs", el("br"), el("span.dim", { text: "on your computer." })),
     el("p.lede", {
       text: returning
-        ? "The weights are cached. This takes a few seconds while they move onto the GPU."
-        : "Four small apps run on your own GPU. Nothing you type is sent anywhere, " +
-          "there is no account and no bill, and it keeps working offline.",
+        ? "The model is already downloaded. Starting it takes a few seconds."
+        : "Four small apps, powered by an AI model that downloads once and then runs " +
+          "entirely on your own computer. Nothing you type is ever sent anywhere. " +
+          "No account, no subscription, and it works without internet.",
     }),
 
     loading
       ? el("div.progress", {},
-          el("div.row", {},
-            el("span.small", { id: "progress-line", text: progressText }),
+          el("div.progress-head", {},
+            el("span.progress-phase", { id: "progress-phase", text: "Starting up" }),
             el("span.spacer"),
-            el("span.small.dim.nums", { id: "progress-pct", text: `${progressPct}%` })))
+            el("span.progress-pct.nums", { id: "progress-pct", text: "" })),
+          el("div.progress-track", {}, el("div.progress-fill", { id: "progress-fill" })),
+          el("div.row", {},
+            el("span.small.dim", { id: "progress-detail", text: "" }),
+            el("span.spacer"),
+            el("span.small.dim", { text: "downloads once, then cached" })))
       : el("div.gate-actions", {}, go, picker),
 
     !loading && el("div.proof", {}, [
-      [device.label || "WebGPU", "runs on"],
-      [model.vram.replace("~", ""), "one-time download"],
-      ["0", "requests while you use it"],
-      ["$0.00", "billed, ever"],
+      [model.vram.replace("~", ""), "downloads once"],
+      [device.label || "your GPU", "runs on"],
+      ["0", "data sent"],
+      ["Free", "always"],
     ].map(([n, k]) => el("div.proof-item", {},
       el("span.n", { text: n }), el("span.k", { text: k })))),
+
+    byline(),
 
     !loading && progressText.startsWith("Could not load") &&
       el("p.small.dim", { style: { marginTop: "18px" }, text: progressText }),
@@ -275,11 +328,27 @@ function gate() {
           const n = await clearModelCache();
           outOfSpace = false;
           progressText = "";
-          toast(n ? "Cleared the downloaded models. Try again." : "Nothing cached to clear.");
+          toast(n ? "Deleted. Try loading again." : "Nothing to delete.");
           render();
         },
-      }, "Free up space"))
+      }, "Delete old models"))
   );
+}
+
+/**
+ * Shown on the gate and on the home screen.
+ *
+ * Renders as plain text while the URL is still the placeholder - a live site
+ * with a dead byline link is worse than a byline without one.
+ */
+function byline() {
+  const linked = AUTHOR.linkedin && !AUTHOR.linkedin.includes("YOUR-PROFILE");
+  return el("p.byline", {},
+    "Built by ",
+    linked
+      ? el("a", { href: AUTHOR.linkedin, target: "_blank", rel: "noopener noreferrer" },
+          AUTHOR.name, el("span.byline-arrow", { text: "↗" }))
+      : AUTHOR.name);
 }
 
 function home() {
@@ -290,17 +359,19 @@ function home() {
     el("section.hero-home", {},
       el("h1", { text: "Four apps." }),
       el("div.proof", {}, [
-        [labelFor(loadedModel()), "on " + (device.label || "your GPU")],
-        [stats.runs ? `${stats.tps}` : "—", "tokens/sec"],
-        [String(stats.runs), stats.runs === 1 ? "generation here" : "generations here"],
-        ["$0.00", "billed"],
+        [labelFor(loadedModel()), "running on " + (device.label || "your GPU")],
+        [stats.runs ? `${stats.tps}` : "—", "words per second"],
+        [String(stats.runs), stats.runs === 1 ? "request, all local" : "requests, all local"],
+        ["Free", "always"],
       ].map(([n, k]) => el("div.proof-item", {},
         el("span.n", { text: n }), el("span.k", { text: k }))))),
 
     el("div.launcher", {}, apps.map(card)),
 
     el("button.under", { onclick: () => (location.hash = "workbench") },
-      icon(bench.icon), "Under the hood", el("span.dim", { text: "→" }))
+      icon(bench.icon), "Under the hood", el("span.dim", { text: "→" })),
+
+    byline()
   );
 }
 

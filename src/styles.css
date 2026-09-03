@@ -284,8 +284,57 @@ select.field option { background: var(--surface); color: var(--ink); }
 .gate-actions { display: flex; align-items: center; gap: 12px; margin: 34px 0 44px; flex-wrap: wrap; }
 .btn-lg { padding: 15px 30px; font-size: 17px; }
 
-.progress { margin: 36px 0 44px; max-width: 46ch; }
-.progress .row { gap: 14px; }
+/* The loader. A phase, a bar, and a number — the three things someone waiting
+   two minutes actually wants. */
+.progress { margin: 36px 0 44px; max-width: 42ch; }
+.progress .row { gap: 14px; margin-top: 12px; }
+
+.progress-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.progress-phase {
+  font-family: "SF Pro Display", -apple-system, sans-serif;
+  font-size: 21px; font-weight: 600; letter-spacing: -0.021em;
+}
+.progress-pct {
+  font-family: "SF Pro Display", -apple-system, sans-serif;
+  font-size: 21px; font-weight: 600; letter-spacing: -0.021em;
+  color: var(--ink-3);
+}
+
+.progress-track {
+  height: 4px; border-radius: var(--r-pill);
+  background: var(--fill-2); overflow: hidden;
+}
+.progress-fill {
+  height: 100%; width: 0;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  transition: width 0.4s var(--ease-out);
+  /* A determinate bar that has not moved for ten seconds reads as frozen; the
+     sheen says the work is still happening between updates. */
+  position: relative; overflow: hidden;
+}
+.progress-fill::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, var(--canvas), transparent);
+  opacity: 0.45;
+  animation: sheen 1.6s ease-in-out infinite;
+}
+@keyframes sheen { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+@media (prefers-reduced-motion: reduce) { .progress-fill::after { animation: none; opacity: 0; } }
+
+/* ---------- byline ---------- */
+
+.byline { margin-top: 40px; font-size: 13px; color: var(--ink-3); }
+.byline a {
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--hairline-2);
+  padding-bottom: 1px;
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.byline a:hover { color: var(--ink); border-color: var(--ink); text-decoration: none; }
+.byline-arrow { font-size: 0.85em; margin-left: 3px; opacity: 0.7; }
 
 /* Facts, set as data rather than prose. */
 .proof { display: flex; gap: 36px; flex-wrap: wrap; }

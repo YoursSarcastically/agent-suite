@@ -49,7 +49,8 @@ export const AGENTS = [
     blurb: "Pulls structured entities out of unstructured text.",
     icon: "\u{1F50D}",
     system:
-      "You extract structured data from text. Use null for anything not explicitly present. " +
+      "You extract structured data from text. Every field is a LIST: when nothing of that kind " +
+      "is present, return an empty list [] - never the word \"null\", and never a placeholder. " +
       "Never infer or invent a value that is not written down.",
     schema: {
       type: "object",
@@ -63,7 +64,8 @@ export const AGENTS = [
       },
       required: ["order_ids", "amounts", "dates", "emails", "people", "products"],
     },
-    buildPrompt: (input) => `Extract every entity present in:\n\n${input}`,
+    buildPrompt: (input) =>
+      `Extract every entity present. Use [] for kinds that do not appear.\n\n${input}`,
     sample:
       "Order #A-99271 placed on 3 March for the Aurora Desk Lamp came to $128.40. " +
       "Priya from accounts (priya@example.com) approved the refund on 11 March.",

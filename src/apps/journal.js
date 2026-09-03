@@ -26,12 +26,11 @@ export default {
   id: "journal",
   name: "Journal",
   icon: "journal",
-  blurb: "Write. It files the rest.",
-  tag: "Per-entry agent + a pattern agent that may decline",
+  blurb: "Write freely. It tracks your mood, people and promises.",
 
   mount(root, ctx) {
     const input = el("textarea.field", {
-      placeholder: "How was today?",
+      placeholder: "How was today? Write however you like.",
       rows: 7,
     });
     const historyEl = el("div.stack");
@@ -40,31 +39,31 @@ export default {
     const trail = ctx.trail();
 
     const saveBtn = el("button.btn.btn-primary", { onclick: save }, "Save entry");
-    const patternBtn = el("button.btn", { onclick: findPattern }, "Look for a pattern");
+    const patternBtn = el("button.btn", { onclick: findPattern }, "Find patterns");
 
     render();
 
     root.append(
       el("section.panel", {},
-        el("label.label", { text: "Today" }),
+        el("label.label", { text: "Today's entry" }),
         input,
         el("div.row", { style: { marginTop: "14px" } }, saveBtn, patternBtn)
       ),
       trail.node,
       insightEl,
       chartEl,
-      el("section.panel", {}, el("label.label", { text: "Entries" }), historyEl)
+      el("section.panel", {}, el("label.label", { text: "Past entries" }), historyEl)
     );
 
     /* ---------------- one entry ---------------- */
 
     async function save() {
       const text = input.value.trim();
-      if (!text) return ctx.toast("Nothing to save yet.");
+      if (!text) return ctx.toast("Write something first.");
 
       await ctx.busy(saveBtn, async (signal) => {
         trail.reset();
-        trail.plan("journal-read", "Reading the entry and filing what is in it");
+        trail.plan("journal-read", "Reading your entry");
 
         const { data } = await ctx.run(JOURNAL_READ, text, { signal });
         entries.add({ text, ...data });
@@ -72,7 +71,7 @@ export default {
         trail.done("journal-read", `${data.mood} · ${data.people.length} people · ${data.topics.length} topics`);
         input.value = "";
         render();
-        ctx.toast("Filed.");
+        ctx.toast("Saved.");
       });
     }
 
@@ -80,11 +79,11 @@ export default {
 
     async function findPattern() {
       const all = entries.all();
-      if (all.length < 3) return ctx.toast("Write a few more entries first — three at minimum.");
+      if (all.length < 3) return ctx.toast("Write at least three entries first.");
 
       await ctx.busy(patternBtn, async (signal) => {
         trail.reset();
-        trail.plan("journal-pattern", `Reading back over ${Math.min(all.length, 14)} entries`);
+        trail.plan("journal-pattern", `Looking across your last ${Math.min(all.length, 14)} entries`);
 
         const digest = all
           .slice(0, 14)
@@ -98,9 +97,9 @@ export default {
         if (!data.found) {
           trail.warn("journal-pattern", "Declined — not enough signal to call it a pattern");
           fill(insightEl, el("section.panel", {},
-            el("span.pill", { text: "No pattern found" }),
+            el("span.pill", { text: "No clear pattern" }),
             el("p.muted", { style: { marginTop: "10px" },
-              text: "Not enough consistency across these entries to say anything true. That is the honest answer, and it will change as you write more." })
+              text: "Your entries are too varied to draw a conclusion yet. Write a few more." })
           ));
           return;
         }
@@ -114,7 +113,7 @@ export default {
           data.evidence.length > 0 &&
             el("div.stack", {}, data.evidence.map((q) => el("div.card.small.muted", { text: `“${q}”` }))),
           data.question && el("p", { style: { marginTop: "14px" }, class: "muted",
-            text: `Worth sitting with: ${data.question}` })
+            text: `Something to think about: ${data.question}` })
         ));
       });
     }
@@ -128,7 +127,7 @@ export default {
         fill(chartEl);
         return fill(historyEl,
           el("div.empty", {}, el("div.big", { text: "\u{1F58A}" }),
-            el("p", { text: "No entries yet. The chart appears once there are a few." })));
+            el("p", { text: "No entries yet. The mood chart appears after a few." })));
       }
 
       renderChart(all);
@@ -140,12 +139,12 @@ export default {
       fill(historyEl,
         el("div.row", { style: { marginBottom: "14px" } },
           el("span.pill", { text: `${all.length} entries` }),
-          people[0] && el("span.pill", { text: `Most mentioned: ${people[0][0]}` }),
-          topics[0] && el("span.pill", { text: `Most written about: ${topics[0][0]}` })
+          people[0] && el("span.pill", { text: `Mentions most: ${people[0][0]}` }),
+          topics[0] && el("span.pill", { text: `Writes most about: ${topics[0][0]}` })
         ),
         commitments.length > 0 &&
           el("details.card", { style: { marginBottom: "12px" } },
-            el("summary", { text: `${commitments.length} things you said you'd do`,
+            el("summary", { text: `${commitments.length} things you said you would do`,
               style: { cursor: "pointer", fontWeight: "570" } }),
             el("ul", { style: { margin: "10px 0 0", paddingLeft: "20px" } },
               commitments.slice(0, 12).map((x) =>
