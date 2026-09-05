@@ -31,7 +31,8 @@
 
 import { el, fill } from "../dom.js";
 import { TASTE, PICK, pickedFrom } from "../app-agents.js";
-import { search, enrichFilms, resolveReference, forPrompt, networkLog, clearNetworkLog } from "../catalog.js";
+import { search, similarTo, discoverByGenre, resolveReference, forPrompt,
+         networkLog, clearNetworkLog } from "../catalog.js";
 
 const MEDIA_LABEL = { film: "films", show: "shows", book: "books" };
 
@@ -107,6 +108,11 @@ export default {
         let note = "";
         let reference = null;
 
+        // Recommending the work they asked to be *like* is not a recommendation.
+        const seen = (hit) =>
+          (reference && norm(hit.title) === norm(reference.title)) ||
+          pool.some((p) => p.title === hit.title && p.kind === hit.kind);
+
         // Two rounds at most. The second only happens if the first produced a
         // genuinely poor match, which the ranking agent has to declare itself.
         for (let round = 1; round <= 2; round++) {
@@ -117,61 +123,63 @@ export default {
           const { data: plan } = await ctx.run(TASTE, note ? `${mood}\n\n${note}` : mood, { signal });
 
           const wants = dedupe(plan.wants).filter((w) => MEDIA_LABEL[w]);
-          const media = wants.length ? wants : ["film", "show", "book"];
-          let queries = dedupe([...plan.queries, mood].filter(isKeywords)).slice(0, 3);
-
-          // "like Ted Lasso" is answerable by the catalogue and not by a 3B
-          // model, so the named work is looked up and its real genres become
-          // the search terms.
-          if (plan.reference_title?.trim() && round === 1) {
-            trail.plan("reference", `Looking up ${plan.reference_title}`);
-            const ref = await resolveReference(plan.reference_title, media, { signal });
-            renderNetwork();
-            if (ref) {
-              reference = ref;
-              queries = dedupe([...ref.genres, ...queries]).slice(0, 3);
-              trail.done("reference", `${ref.title} is ${ref.genres.join(", ")}`);
-            } else {
-              trail.done("reference", "Not in the catalogues — using the description instead");
-            }
-          }
+          const media = wants.length ? wants : ["film", "show"];
+          const queries = dedupe([...plan.queries, mood].filter(isKeywords)).slice(0, 3);
 
           trail.done("plan_searches",
             `${media.map((m) => MEDIA_LABEL[m]).join(", ")} · ${queries.join(" · ") || mood}`);
 
-          // Fan-out is deterministic. A 1.5B planner asked to sequence five
-          // tools reaches for films when the request said books, calls the
-          // ranking step before it has searched anything, and burns a full
-          // generation per wrong turn. What is worth delegating here is which
-          // catalogues and which words - not the order of operations.
-          for (const medium of media) {
-            const terms = (queries.length ? queries : [mood])
-              .filter((t) => !usedTerms.has(`${medium}:${t}`));
-            if (!terms.length) continue;
+          // "Like Ted Lasso" is a question the catalogue can answer directly and
+          // a 3B model cannot. When a work is named, look it up and ask TMDB
+          // what resembles it - that beats any search terms we could invent.
+          if (plan.reference_title?.trim() && round === 1 && !reference) {
+            trail.plan("reference", `Looking up ${plan.reference_title}`);
+            reference = await resolveReference(plan.reference_title, media, { signal });
+            renderNetwork();
 
-            trail.plan(`search_${medium}s`, `Searching real ${MEDIA_LABEL[medium]} for: ${terms.join(", ")}`);
+            if (reference) {
+              trail.done("reference", `Found ${reference.title} (${reference.year})`);
+              trail.plan("similar", `Asking what people who liked ${reference.title} also watched`);
+              const alike = await similarTo(reference, { signal });
+              for (const hit of alike) if (!seen(hit)) pool.push(hit);
+              renderNetwork();
+              trail.done("similar", `${alike.length} titles like ${reference.title}`);
+            } else {
+              trail.done("reference", "Not in the catalogue — using the description instead");
+            }
+          }
+
+          // Genre discovery, then keyword search. Discovery is the better of the
+          // two and only works for terms that name an actual genre, so keyword
+          // search stays as the fallback for everything else.
+          for (const medium of media) {
+            const terms = queries.filter((t) => !usedTerms.has(`${medium}:${t}`));
+            if (!terms.length) continue;
+            terms.forEach((t) => usedTerms.add(`${medium}:${t}`));
+
+            trail.plan(`search_${medium}s`, `Searching ${MEDIA_LABEL[medium]}: ${terms.join(", ")}`);
             const before = pool.length;
 
-            for (const term of terms) {
-              usedTerms.add(`${medium}:${term}`);
-              const hits = await search(medium, term, { limit: 5, signal });
-              for (const hit of hits) {
-                // Recommending the work they asked to be *like* is not a
-                // recommendation; they have seen it.
-                if (reference && norm(hit.title) === norm(reference.title)) continue;
-                if (!pool.some((p) => p.title === hit.title && p.kind === hit.kind)) pool.push(hit);
+            const discovered = await discoverByGenre(terms, medium, { signal });
+            for (const hit of discovered) if (!seen(hit)) pool.push(hit);
+
+            if (pool.length - before < 4) {
+              for (const term of terms) {
+                for (const hit of await search(medium, term, { limit: 6, signal })) {
+                  if (!seen(hit)) pool.push(hit);
+                }
               }
-              renderNetwork();
             }
+            renderNetwork();
 
             const found = pool.length - before;
             trail.done(`search_${medium}s`, found
-              ? `${found} new ${MEDIA_LABEL[medium]}: ${pool.slice(before, before + 4).map((p) => p.title).join(", ")}`
+              ? `${found} new ${MEDIA_LABEL[medium]}`
               : `nothing new in ${MEDIA_LABEL[medium]}`);
           }
 
           if (!pool.length) {
-            note = "The searches returned nothing. Use broader, more common genre words.";
+            note = "Those searches returned nothing. Use broader, more common genre words.";
             continue;
           }
 
@@ -181,19 +189,9 @@ export default {
           // part that grows without bound, so it is capped before it can push
           // the generation past max_tokens.
           const shortlist = pool.slice(0, 10);
-
-          // iTunes gives a title, a year and a one-word genre. That is thin
-          // material to rank on, so the shortlist - and only the shortlist -
-          // gets a real genre list, plot and IMDb rating before the model sees
-          // it. Bounded on purpose: ten titles a search, cached, free tier.
-          if (shortlist.some((it) => it.kind === "film")) {
-            trail.plan("enrich", "Looking up ratings and plots");
-            await enrichFilms(shortlist, { signal });
-            renderNetwork();
-          }
           const ask = (items, blurb) =>
             `THEY ASKED FOR: "${mood}"\n` +
-            `${reference ? `SIMILAR TO: ${reference.title} (${reference.genres.join(", ")})\n` : ""}` +
+            `${reference ? `SIMILAR TO: ${reference.title}\n` : ""}` +
             `${plan.vibe?.length ? `VIBE: ${plan.vibe.join(", ")}\n` : ""}` +
             `${plan.avoid?.length ? `AVOID: ${plan.avoid.join(", ")}\n` : ""}` +
             `\nCANDIDATES:\n${forPrompt(items, { blurb })}`;
@@ -203,8 +201,6 @@ export default {
             ({ data, issues } = await ctx.run(PICK, ask(shortlist, 110), { signal }));
           } catch (err) {
             if (!err.truncated) throw err;
-            // One retry on half the list with no synopses at all. A shorter
-            // prompt is a worse ranking and a much better outcome than an error.
             trail.plan("choose", "Too many options — narrowing the list");
             ({ data, issues } = await ctx.run(PICK, ask(pool.slice(0, 6), 0), { signal }));
           }
@@ -216,9 +212,6 @@ export default {
             ? `${kept.length} pick${kept.length === 1 ? "" : "s"}`
             : "nothing in the catalogue fits");
 
-          // The retry is the agentic part that survived: the ranking agent is
-          // allowed to say the catalogue did not have it, and that verdict
-          // sends the loop back for different search words.
           if (data.good_match !== false && kept.length) break;
           note = `A search for "${queries.join('", "')}" returned titles that were not right. ` +
                  `Use completely different words — different genre, different theme.`;
@@ -247,6 +240,9 @@ export default {
               el("span.pill.pill-warn", { text: "not a close match" })),
           el("div.media-grid", {}, shown.map(({ item, why }) =>
             el("div.media", {},
+              item.poster && el("img.poster", {
+                src: item.poster, alt: "", loading: "lazy", decoding: "async",
+              }),
               el("span.kind", { text: item.kind }),
               el("span.title", { text: item.title }),
               el("span.meta", {

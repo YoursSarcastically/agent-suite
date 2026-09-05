@@ -644,12 +644,18 @@ select.field option { background: var(--surface); color: var(--ink); }
 
 /* ---------- media ---------- */
 
-.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 18px; }
 .media {
-  padding: 20px 0; border-radius: 0;
-  background: transparent; border: 0; border-top: 1px solid var(--hairline);
+  padding: 0; border-radius: 0;
+  background: transparent; border: 0;
   display: flex; flex-direction: column; gap: 6px;
   animation: rise 0.45s var(--ease-out) both;
+}
+.poster {
+  width: 100%; aspect-ratio: 2 / 3; object-fit: cover;
+  border-radius: var(--r-md);
+  background: var(--fill);
+  margin-bottom: 4px;
 }
 .media .kind { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
 .media .title { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.24; }
