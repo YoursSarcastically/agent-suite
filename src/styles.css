@@ -480,30 +480,54 @@ select.field option { background: var(--surface); color: var(--ink); }
 .under .icon { font-size: 17px; }
 
 
-/* Three even columns, with the first card spanning two. Five apps divide into
-   3-up as 2+1 then 3, and into 2-up as 2 then 2+2 - no ragged last row at
-   either width. auto-fill cannot do this, so the breakpoints are explicit. */
+/* Bento. Four columns over three rows, twelve cells, five tiles:
+     ┌───────────┬───────────┐
+     │           │ Braindump │
+     │   Chat    ├─────┬─────┤
+     │           │Read │Jrnl │
+     ├───────────┴─────┴─────┤
+     │      Recommend Me     │
+     └───────────────────────┘
+   Sizes are positional rather than per-app so the arrangement lives in one
+   place; reordering APPS reshuffles the layout, which is the intent. */
 .launcher {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: minmax(132px, auto);
   gap: 12px;
   margin-bottom: 96px;
 }
-.app-card-wide { grid-column: span 2; }
+.app-card:nth-child(1) { grid-column: span 2; grid-row: span 2; }
+.app-card:nth-child(2) { grid-column: span 2; }
+.app-card:nth-child(3),
+.app-card:nth-child(4) { grid-column: span 1; }
+.app-card:nth-child(5) { grid-column: span 4; }
+
+/* The feature tile has room to breathe, so it uses it. */
+.app-card:nth-child(1) h3 { font-size: 26px; letter-spacing: -0.024em; }
+.app-card:nth-child(1) .app-icon { font-size: 28px; }
+.app-card:nth-child(1) .app-icon .icon { font-size: 28px; }
+.app-card:nth-child(1) .blurb { font-size: 16px; max-width: 30ch; }
 
 @media (max-width: 900px) {
-  .launcher { grid-template-columns: repeat(2, 1fr); }
+  /* Two columns: the feature stays full width, the rest pair up, and the last
+     one spans again so nothing is left stranded. */
+  .launcher { grid-template-columns: repeat(2, 1fr); grid-auto-rows: minmax(124px, auto); }
+  .app-card:nth-child(1) { grid-column: span 2; grid-row: span 1; }
+  .app-card:nth-child(2) { grid-column: span 2; }
+  .app-card:nth-child(5) { grid-column: span 2; }
 }
 @media (max-width: 560px) {
   .launcher { grid-template-columns: 1fr; }
-  .app-card-wide { grid-column: span 1; }
+  .app-card:nth-child(n) { grid-column: span 1; grid-row: span 1; }
+  .app-card:nth-child(1) h3 { font-size: 21px; }
 }
 
 /* A card is a solid surface one value above the canvas. That step is the
    entire separation mechanism — no border, no shadow at rest. */
 .app-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
-  padding: 32px 30px;
+  padding: 26px 26px 24px;
   text-align: left; cursor: pointer;
   background: var(--surface);
   border: 0;
@@ -515,7 +539,7 @@ select.field option { background: var(--surface); color: var(--ink); }
 .app-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lift); }
 .app-card:active { transform: translateY(-1px); }
 .app-card:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
-.app-card h3 { margin-top: 4px; }
+.app-card h3 { margin-top: auto; }
 .app-card .blurb { color: var(--ink-2); font-size: 15px; line-height: 1.47; }
 
 
@@ -563,6 +587,9 @@ select.field option { background: var(--surface); color: var(--ink); }
 
 .card { padding: 16px 18px; border-radius: var(--r-md); background: var(--fill); border: 0; animation: rise 0.4s var(--ease-out) both; }
 .card + .card { margin-top: 9px; }
+/* Still being read by the model: present, legible, visibly unfinished. */
+.card-pending { opacity: 0.72; }
+.card-pending .pill { animation: blink 1.6s ease-in-out infinite; }
 
 .stat-row { display: flex; gap: 34px; flex-wrap: wrap; }
 .stat .n { font-family: "SF Pro Display", -apple-system, sans-serif; font-size: 40px; font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; line-height: 1.05; }

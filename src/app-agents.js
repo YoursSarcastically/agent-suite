@@ -254,7 +254,9 @@ export const TASTE = {
     "  \"something like Nope but funnier\" -> horror comedy, sci-fi comedy, alien invasion\n" +
     "  \"sad in a good way\" -> literary fiction, melancholy drama, grief\n" +
     "  \"a show to watch while cooking\" -> sitcom, light comedy, cooking show\n\n" +
-    "If they name a medium - a book, a film, a show - put ONLY that medium in `wants`.",
+    "If they name a medium - a book, a film, a show - put ONLY that medium in `wants`.\n" +
+    "If they name an existing work to be like, put its title in `reference_title` and still " +
+    "give your best guess at its genres in `queries`.",
   schema: {
     type: "object",
     properties: {
@@ -266,8 +268,14 @@ export const TASTE = {
       queries: list("Three to five short search phrases"),
       vibe: list("Two to four adjectives describing the mood they want"),
       avoid: list("Anything they said they do not want. Empty if nothing."),
+      reference_title: {
+        type: "string",
+        description:
+          "If they named an existing film, show or book to be like, put JUST that title here. " +
+          "Empty string if they named none.",
+      },
     },
-    required: ["wants", "queries", "vibe", "avoid"],
+    required: ["wants", "queries", "vibe", "avoid", "reference_title"],
   },
   buildPrompt: (input) =>
     `Someone says: "${input}"\n\nWhat is this ABOUT? Give three to five subject or genre ` +

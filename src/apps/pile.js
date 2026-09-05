@@ -20,6 +20,16 @@ import { fetchArticle, looksLikeUrl, networkLog } from "../catalog.js";
 
 const shelf = collection("pile:articles", { cap: 250 });
 
+/** Stand-in title until the model produces a real one. */
+const firstLine = (text) => {
+  const line = text.split("\n").map((l) => l.trim()).find(Boolean) ?? "Untitled";
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+};
+
+/** ~230 words a minute, which is close enough to be useful before summarising. */
+const estimateMinutes = (text) =>
+  Math.max(1, Math.round(text.trim().split(/\s+/).length / 230));
+
 export default {
   id: "pile",
   name: "Reading List",
@@ -97,11 +107,17 @@ export default {
         return ctx.toast("That is too short. Paste a link, or the whole article.");
       }
 
+      // Fetching is quick; summarising is not. So the article joins the list as
+      // soon as there is something to show, and the model catches up in the
+      // background - you can paste five links in a row rather than waiting
+      // thirty seconds between each.
+      let entry;
       await ctx.busy(saveBtn, async (signal) => {
         trail.reset();
 
         let text = raw;
         let source = "";
+        let title = "";
 
         if (isUrl) {
           trail.plan("fetch", "Fetching the page");
@@ -109,30 +125,55 @@ export default {
             const page = await fetchArticle(raw, { signal });
             text = page.title ? `${page.title}\n\n${page.text}` : page.text;
             source = page.url;
+            title = page.title;
             trail.done("fetch", page.title || "Page fetched");
           } catch (err) {
             if (err.name === "AbortError") return;
             trail.warn("fetch", err.message);
             return ctx.toast(`${err.message} — try pasting the text instead.`);
           }
-          if (text.length < 120) {
-            return ctx.toast("That page had almost no text. Try pasting it instead.");
+          if (text.replace(/\s+/g, " ").length < 200) {
+            return ctx.toast("That page had almost no readable text — it may need a login.");
           }
         }
 
-        trail.plan("shelf-read", "Reading and summarising the article");
+        entry = shelf.add({
+          title: title || firstLine(text),
+          one_liner: "",
+          topics: [],
+          claims: [],
+          answers: "",
+          minutes: estimateMinutes(text),
+          difficulty: "medium",
+          text: text.slice(0, 20000),
+          source,
+          read: false,
+          pending: true,
+        });
 
-        // Long articles blow the context window; the opening is where the
-        // argument lives, and the tail is usually related-links furniture.
-        const { data } = await ctx.run(SHELF_READ, text.slice(0, 6000), { signal });
-        shelf.add({ ...data, text: text.slice(0, 20000), source, read: false });
-
-        trail.done("shelf-read", `${data.title} — ${data.minutes} min, ${data.difficulty}`);
         paste.value = "";
         render();
         renderNetwork();
-        ctx.toast("Saved.");
       });
+
+      // Deliberately not awaited: the engine serialises requests anyway, so
+      // several of these queue up behind each other without blocking the page.
+      if (entry) summarise(entry);
+    }
+
+    /** Fill in the summary for an article already on the list. */
+    async function summarise(entry) {
+      try {
+        // The opening is where the argument lives; the tail is usually
+        // related-links furniture, and the whole thing will not fit regardless.
+        const { data } = await ctx.run(SHELF_READ, entry.text.slice(0, 6000));
+        shelf.update(entry.id, { ...data, pending: false });
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        shelf.update(entry.id, { pending: false, one_liner: "Could not summarise this one." });
+      } finally {
+        render();
+      }
     }
 
     /* ---------------- the loop ---------------- */
@@ -149,6 +190,7 @@ export default {
         fill(answerEl);
 
         const index = all
+          .filter((a) => !a.pending)
           .map((a, i) => `${i + 1}. ${a.title} — ${a.one_liner} [${a.topics.join(", ")}] ` +
             `(${a.minutes} min, ${a.difficulty}, ${a.read ? "read" : "unread"})`)
           .join("\n");
@@ -291,13 +333,15 @@ export default {
           el("span.pill", { text: `${stats.readCount} read` }),
           el("span", { class: `pill ${stats.rate < 30 ? "pill-warn" : "pill-good"}`,
             text: `${stats.rate}% read` })),
-        all.map((a) => el("div.card", {},
+        all.map((a) => el(`div.card${a.pending ? ".card-pending" : ""}`, {},
           el("div.row", {},
             el("strong", { text: a.title }),
             el("span.spacer"),
-            a.read && el("span.pill.pill-good", { text: "read" }),
+            a.pending && el("span.pill", { text: "Summarising…" }),
+            !a.pending && a.read && el("span.pill.pill-good", { text: "read" }),
             el("span.dim.small", { text: ago(a.at) })),
-          el("p.muted.small", { style: { margin: "7px 0 0" }, text: a.one_liner }),
+          el("p.muted.small", { style: { margin: "7px 0 0" },
+            text: a.pending ? "Reading it now — you can carry on adding links." : a.one_liner }),
           el("div.task-meta", {},
             el("span.pill", { text: `${a.minutes} min` }),
             ...a.topics.slice(0, 3).map((t) => el("span.pill", { text: t })),

@@ -214,12 +214,19 @@ const ctx = {
    * cancelling actually reaches the engine.
    */
   async busy(button, fn) {
-    if (activeController) return toast("Wait for the current task to finish.");
+    // Pressing the button again means "do it with this instead", not "please
+    // queue". Cancel what is running and take the new request.
+    if (activeController) {
+      activeController.abort();
+      await interrupt();
+      await new Promise((r) => setTimeout(r, 60));
+    }
     activeController = new AbortController();
+    const mine = activeController;
 
     const original = button?.textContent;
     const stopBtn = el("button.btn.btn-sm", {
-      onclick: () => { activeController?.abort(); interrupt(); },
+      onclick: () => { mine.abort(); interrupt(); },
     }, "Stop");
     if (button) {
       button.disabled = true;
@@ -228,7 +235,7 @@ const ctx = {
     }
 
     try {
-      await fn(activeController.signal);
+      await fn(mine.signal);
     } catch (err) {
       if (err.name !== "AbortError") {
         toast(err.message);
@@ -236,12 +243,14 @@ const ctx = {
       }
     } finally {
       stopBtn.remove();
-      for (const line of trails) { line.hidden = true; line.textContent = ""; }
+      if (activeController === mine) {
+        for (const line of trails) { line.hidden = true; line.textContent = ""; }
+        activeController = null;
+      }
       if (button) {
         button.disabled = false;
         button.textContent = original;
       }
-      activeController = null;
     }
   },
 
@@ -447,11 +456,9 @@ function authorCard() {
   );
 }
 
-function card(app, i) {
-  // Five cards in an even grid always leave a ragged last row. The first one
-  // spans two columns instead, which fills 3-up and 2-up exactly and gives the
-  // most-used app the prominence it should have had anyway.
-  return el(`button.app-card${i === 0 ? ".app-card-wide" : ""}`,
+function card(app) {
+  // Sizes come from the grid, keyed by position - see .launcher in styles.css.
+  return el("button.app-card",
     { type: "button", onclick: () => (location.hash = app.id) },
     el("div.app-icon", {}, icon(app.icon)),
     el("h3", { text: app.name }),

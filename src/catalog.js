@@ -298,6 +298,43 @@ export async function enrichFilms(items, { signal, max = 8 } = {}) {
   return items;
 }
 
+/**
+ * Look up a work the person named, and return its real genres.
+ *
+ * "series like Ted Lasso" is the case that motivated this. A 3B model has no
+ * reliable idea what Ted Lasso is, so asked for genres it falls back to
+ * "comedy" and the catalogue returns Comedy Shorts on BBC iPlayer. But TVMaze
+ * knows exactly what Ted Lasso is - Comedy, Drama, Sport - and those are far
+ * better search terms than anything the model could have recalled.
+ *
+ * So the reference is resolved by lookup rather than by memory, which is the
+ * same division of labour the rest of this app already uses.
+ */
+export async function resolveReference(title, media, { signal } = {}) {
+  if (!title?.trim()) return null;
+
+  const order = media?.length ? [...new Set(media)] : ["show", "film", "book"];
+  for (const kind of order) {
+    const hits = await search(kind, title, { limit: 3, signal });
+    // Require a close title match; a fuzzy one sends the search somewhere worse
+    // than where it started.
+    const hit = hits.find((h) => similar(h.title, title));
+    if (!hit) continue;
+
+    const genres = (hit.genre ?? "")
+      .split(/[,;/]/).map((g) => g.trim().toLowerCase())
+      .filter((g) => g && g.length < 24);
+    if (genres.length) return { kind, title: hit.title, genres };
+  }
+  return null;
+}
+
+const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const similar = (a, b) => {
+  const [x, y] = [norm(a), norm(b)];
+  return x === y || x.startsWith(y) || y.startsWith(x);
+};
+
 /* ------------------------------------------------------------------ *
  * dispatch
  * ------------------------------------------------------------------ */

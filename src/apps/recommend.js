@@ -31,11 +31,12 @@
 
 import { el, fill } from "../dom.js";
 import { TASTE, PICK, pickedFrom } from "../app-agents.js";
-import { search, enrichFilms, forPrompt, networkLog, clearNetworkLog } from "../catalog.js";
+import { search, enrichFilms, resolveReference, forPrompt, networkLog, clearNetworkLog } from "../catalog.js";
 
 const MEDIA_LABEL = { film: "films", show: "shows", book: "books" };
 
 const dedupe = (xs) => [...new Set((xs ?? []).map((x) => String(x).trim()).filter(Boolean))];
+const norm = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 /**
  * A catalogue search box wants keywords. Five or more words is a sentence, and
@@ -104,6 +105,7 @@ export default {
         const usedTerms = new Set();
         let chosen = null;
         let note = "";
+        let reference = null;
 
         // Two rounds at most. The second only happens if the first produced a
         // genuinely poor match, which the ranking agent has to declare itself.
@@ -116,7 +118,23 @@ export default {
 
           const wants = dedupe(plan.wants).filter((w) => MEDIA_LABEL[w]);
           const media = wants.length ? wants : ["film", "show", "book"];
-          const queries = dedupe([...plan.queries, mood].filter(isKeywords)).slice(0, 3);
+          let queries = dedupe([...plan.queries, mood].filter(isKeywords)).slice(0, 3);
+
+          // "like Ted Lasso" is answerable by the catalogue and not by a 3B
+          // model, so the named work is looked up and its real genres become
+          // the search terms.
+          if (plan.reference_title?.trim() && round === 1) {
+            trail.plan("reference", `Looking up ${plan.reference_title}`);
+            const ref = await resolveReference(plan.reference_title, media, { signal });
+            renderNetwork();
+            if (ref) {
+              reference = ref;
+              queries = dedupe([...ref.genres, ...queries]).slice(0, 3);
+              trail.done("reference", `${ref.title} is ${ref.genres.join(", ")}`);
+            } else {
+              trail.done("reference", "Not in the catalogues — using the description instead");
+            }
+          }
 
           trail.done("plan_searches",
             `${media.map((m) => MEDIA_LABEL[m]).join(", ")} · ${queries.join(" · ") || mood}`);
@@ -138,6 +156,9 @@ export default {
               usedTerms.add(`${medium}:${term}`);
               const hits = await search(medium, term, { limit: 5, signal });
               for (const hit of hits) {
+                // Recommending the work they asked to be *like* is not a
+                // recommendation; they have seen it.
+                if (reference && norm(hit.title) === norm(reference.title)) continue;
                 if (!pool.some((p) => p.title === hit.title && p.kind === hit.kind)) pool.push(hit);
               }
               renderNetwork();
@@ -172,6 +193,7 @@ export default {
           }
           const ask = (items, blurb) =>
             `THEY ASKED FOR: "${mood}"\n` +
+            `${reference ? `SIMILAR TO: ${reference.title} (${reference.genres.join(", ")})\n` : ""}` +
             `${plan.vibe?.length ? `VIBE: ${plan.vibe.join(", ")}\n` : ""}` +
             `${plan.avoid?.length ? `AVOID: ${plan.avoid.join(", ")}\n` : ""}` +
             `\nCANDIDATES:\n${forPrompt(items, { blurb })}`;
